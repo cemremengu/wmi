@@ -129,6 +129,7 @@ Per-query options via `(*Client).Query()`:
 
 - `(*QContext).Each(ctx)` returns an iterator for streaming rows one at a time.
 - `(*QContext).Collect(ctx, options...)` executes and returns all rows.
+- `(*QContext).SetNamespace(...)` overrides the default `root/cimv2` namespace.
 - `(*QContext).SetResultOptions(...)` configures property shaping for results.
 - `(*QContext).SetFlags(...)` overrides query flags.
 - `(*QContext).SetTimeout(...)` sets the default per-row fetch timeout (milliseconds, passed to the WMI protocol).
@@ -140,6 +141,7 @@ Use `client.Query()` to set per-query options before iterating:
 
 ```go
 qc := client.Query("SELECT Name, ProcessId FROM Win32_Process").
+    SetNamespace("root/cimv2").
     SetTimeout(120).
     SetSkipOptimize(true).
     SetResultOptions(wmi.ResultOptions{IgnoreDefaults: true})
@@ -149,6 +151,18 @@ for props, err := range qc.Each(ctx) {
         log.Fatal(err)
     }
     fmt.Printf("pid=%v name=%v\n", props["ProcessId"].Value, props["Name"].Value)
+}
+```
+
+Querying a non-default namespace works the same way:
+
+```go
+events := client.Query("SELECT * FROM __EventFilter").
+    SetNamespace("root/subscription")
+
+rows, err := events.Collect(ctx)
+if err != nil {
+    log.Fatal(err)
 }
 ```
 

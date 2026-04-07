@@ -36,7 +36,7 @@ func newConnection(host, username, password string) *connection {
 		port:          135,
 		username:      username,
 		password:      password,
-		namespace:     "//./root/cimv2",
+		namespace:     defaultNamespace,
 		kdcHost:       host,
 		kdcPort:       88,
 		kerberosCache: NewKerberosCache(""),
@@ -452,9 +452,7 @@ func (c *connection) loginNTLM(ctx context.Context, svc *service, namespace stri
 	if svc == nil || svc.proto == nil {
 		return errors.New("service is nil")
 	}
-	if !bytes.HasPrefix([]byte(namespace), []byte("//")) {
-		namespace = "//./" + namespace
-	}
+	namespace = normalizeNamespace(namespace)
 	var preferred *string
 	pdu := bytes.NewBuffer(nil)
 	pdu.Write(orpcthis(0))

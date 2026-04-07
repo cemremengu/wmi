@@ -11,6 +11,7 @@ import (
 func TestQContextConfigurationHelpers(t *testing.T) {
 	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil).SetTimeout(1234)
 	require.Equal(t, uint32(1234), qc.timeout)
+	require.Equal(t, defaultNamespace, qc.query.Namespace)
 	require.False(t, qc.resultOptions.LoadQualifiers, "expected qualifiers to be disabled by default")
 	require.Same(t, qc, qc.SetResultOptions(ResultOptions{
 		IgnoreDefaults: true,
@@ -21,6 +22,19 @@ func TestQContextConfigurationHelpers(t *testing.T) {
 	require.True(t, qc.resultOptions.IgnoreDefaults)
 	require.True(t, qc.resultOptions.IgnoreMissing)
 	require.False(t, qc.resultOptions.LoadQualifiers)
+}
+
+func TestQContextSetNamespaceNormalizesValue(t *testing.T) {
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
+
+	require.Same(t, qc, qc.SetNamespace("root/subscription"))
+	require.Equal(t, "//./root/subscription", qc.query.Namespace)
+
+	qc.SetNamespace("  //./root/default  ")
+	require.Equal(t, "//./root/default", qc.query.Namespace)
+
+	qc.SetNamespace("")
+	require.Equal(t, defaultNamespace, qc.query.Namespace)
 }
 
 func TestQContextNextObjectRetriesTimedOut(t *testing.T) {

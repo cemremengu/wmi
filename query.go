@@ -6,7 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"iter"
+	"strings"
 )
+
+const defaultNamespace = "//./root/cimv2"
 
 // Query describes a WQL query to execute against a WMI namespace.
 type Query struct {
@@ -41,7 +44,7 @@ type QContext struct {
 func NewQuery(query string) Query {
 	return Query{
 		Query:     query,
-		Namespace: "//./root/cimv2",
+		Namespace: defaultNamespace,
 		Language:  "WQL",
 	}
 }
@@ -56,15 +59,22 @@ func DefaultQueryFlags() uint32 {
 	return WBEMFlagReturnImmediately | WBEMFlagForwardOnly
 }
 
-func (q Query) context(conn *connection, svc *service) *QContext {
-	if q.Namespace == "" {
-		q.Namespace = "//./root/cimv2"
+func normalizeNamespace(namespace string) string {
+	namespace = strings.TrimSpace(namespace)
+	switch {
+	case namespace == "":
+		return defaultNamespace
+	case strings.HasPrefix(namespace, "//"):
+		return namespace
+	default:
+		return "//./" + namespace
 	}
+}
+
+func (q Query) context(conn *connection, svc *service) *QContext {
+	q.Namespace = normalizeNamespace(q.Namespace)
 	if q.Language == "" {
 		q.Language = "WQL"
-	}
-	if len(q.Namespace) < 2 || q.Namespace[:2] != "//" {
-		q.Namespace = "//./" + q.Namespace
 	}
 	return &QContext{
 		query:         q,
@@ -93,6 +103,12 @@ func (q *QContext) SetTimeout(timeout uint32) *QContext {
 // SetSkipOptimize disables the smart-enum optimization when set to true.
 func (q *QContext) SetSkipOptimize(skip bool) *QContext {
 	q.skipOptimize = skip
+	return q
+}
+
+// SetNamespace overrides the WMI namespace for this query.
+func (q *QContext) SetNamespace(namespace string) *QContext {
+	q.query.Namespace = normalizeNamespace(namespace)
 	return q
 }
 

@@ -1,0 +1,74 @@
+version: "2"
+run:
+  timeout: 15m
+  concurrency: 10
+  allow-parallel-runners: true
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bodyclose
+    - dogsled
+    - errcheck
+    - errorlint
+    - exhaustive
+    - gocyclo
+    - goprintffuncname
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - staticcheck
+    - unconvert
+    - unused
+    - whitespace
+    - perfsprint
+    - testifylint
+    - wastedassign
+    - gocritic
+    - unparam
+    - revive
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    nakedret:
+      max-func-lines: 60
+    testifylint:
+      disable-all: true
+      enable:
+        - nil-compare
+        - compares
+        - error-is-as
+        - bool-compare
+        - empty
+        - len
+        - expected-actual
+        - error-nil
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples/
+      - _test\.go$
+issues:
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - golines
+  settings:
+    golines:
+      max-len: 120
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

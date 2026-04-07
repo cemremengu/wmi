@@ -1,0 +1,421 @@
+package wmi
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"iter"
+)
+
+// Query describes a WQL query to execute against a WMI namespace.
+type Query struct {
+	Query     string
+	Namespace string
+	Language  string
+}
+
+// ResultOptions controls which properties are included in query results.
+type ResultOptions struct {
+	IgnoreDefaults bool
+	IgnoreMissing  bool
+	LoadQualifiers bool
+}
+
+// QContext holds the state for an in-progress WMI query.
+type QContext struct {
+	query         Query
+	conn          *Connection
+	service       *Service
+	flags         uint32
+	timeout       uint32
+	skipOptimize  bool
+	classParts    map[string]*classPart
+	interfaceIPID string
+	proxyGUID     []byte
+	smart         bool
+	resultOptions ResultOptions
+}
+
+// NewQuery creates a Query with default namespace and language.
+func NewQuery(query string) Query {
+	return Query{
+		Query:     query,
+		Namespace: "//./root/cimv2",
+		Language:  "WQL",
+	}
+}
+
+// DefaultResultOptions returns the default ResultOptions.
+func DefaultResultOptions() ResultOptions {
+	return ResultOptions{}
+}
+
+// DefaultQueryFlags returns the default WBEM query flags.
+func DefaultQueryFlags() uint32 {
+	return WBEMFlagReturnImmediately | WBEMFlagForwardOnly
+}
+
+// Context creates a QContext bound to the given connection and service.
+func (q Query) Context(conn *Connection, service *Service) *QContext {
+	if q.Namespace == "" {
+		q.Namespace = "//./root/cimv2"
+	}
+	if q.Language == "" {
+		q.Language = "WQL"
+	}
+	if len(q.Namespace) < 2 || q.Namespace[:2] != "//" {
+		q.Namespace = "//./" + q.Namespace
+	}
+	return &QContext{
+		query:         q,
+		conn:          conn,
+		service:       service,
+		flags:         DefaultQueryFlags(),
+		timeout:       60,
+		classParts:    make(map[string]*classPart),
+		resultOptions: DefaultResultOptions(),
+	}
+}
+
+// SetResultOptions configures the default property shaping for rows returned by
+// this query context.
+func (q *QContext) SetResultOptions(options ResultOptions) *QContext {
+	q.resultOptions = options
+	return q
+}
+
+// SetTimeout sets the per-row fetch timeout in milliseconds.
+func (q *QContext) SetTimeout(timeout uint32) *QContext {
+	q.timeout = timeout
+	return q
+}
+
+// SetSkipOptimize disables the smart-enum optimization when set to true.
+func (q *QContext) SetSkipOptimize(skip bool) *QContext {
+	q.skipOptimize = skip
+	return q
+}
+
+// SetFlags overrides the WBEM query flags.
+func (q *QContext) SetFlags(flags uint32) *QContext {
+	q.flags = flags
+	return q
+}
+
+// IsOptimized reports whether the query is using smart enumeration.
+func (q *QContext) IsOptimized() bool {
+	return q.smart
+}
+
+// Run starts the query, calls fn, and closes the query on return.
+func (q *QContext) Run(ctx context.Context, fn func(*QContext) error) (err error) {
+	if fn == nil {
+		return errors.New("query context callback is nil")
+	}
+	if err := q.start(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := q.close(ctx); closeErr != nil {
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
+	return fn(q)
+}
+
+// Results iterates over all result rows, calling yield for each one.
+func (q *QContext) Results(
+	ctx context.Context,
+	yield func(map[string]*Property) error,
+	options ...ResultOptions,
+) error {
+	if yield == nil {
+		return errors.New("query results callback is nil")
+	}
+	if len(options) > 0 {
+		q.resultOptions = options[0]
+	}
+	for {
+		props, err := q.next(ctx)
+		if err != nil {
+			if isErrorCode(err, wbemSFalse) {
+				return nil
+			}
+			return err
+		}
+		if err := yield(props); err != nil {
+			return err
+		}
+	}
+}
+
+// start begins the WMI query and prepares the result stream.
+func (q *QContext) start(ctx context.Context) error {
+	debugf("query start namespace=%s skip_optimize=%v flags=0x%08x", q.query.Namespace, q.skipOptimize, q.flags)
+	if q.conn.Namespace != q.query.Namespace {
+		if err := q.conn.LoginNTLM(ctx, q.service, q.query.Namespace); err != nil {
+			return err
+		}
+	}
+
+	lang := q.query.Language
+	queryText := q.query.Query
+	pdu := bytes.NewBuffer(nil)
+	pdu.Write(orpcthis(0))
+	pdu.Write(wordStr(&lang))
+	pdu.Write(wordStr(&queryText))
+	_ = binary.Write(pdu, binary.LittleEndian, q.flags)
+	pdu.Write(getNull())
+
+	req := newRPCRequest(20, q.service.proto.currentIPID)
+	req.setAppData(pdu.Bytes())
+	wire, err := req.signData(q.service.proto)
+	if err != nil {
+		return err
+	}
+	reply, err := q.service.proto.roundTrip(ctx, wire)
+	if err != nil {
+		return err
+	}
+	msg, err := q.service.proto.responseMessage(reply.fragments)
+	if err != nil {
+		return err
+	}
+	iface, err := parseSimpleInterfaceResponse(msg)
+	if err != nil {
+		return err
+	}
+	q.interfaceIPID = iface.ipid
+	debugf("query start ok interface_ipid=%s", q.interfaceIPID)
+	if !q.skipOptimize {
+		if err := q.optimize(ctx); err != nil && !errors.Is(err, ErrServerNotOptimized) {
+			debugf("query optimize failed err=%v", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// optimize attempts to upgrade the query to use smart enumeration.
+func (q *QContext) optimize(ctx context.Context) error {
+	debugf("query optimize start ipid=%s", q.interfaceIPID)
+	ipid, err := uuidToBin(q.interfaceIPID)
+	if err != nil {
+		return err
+	}
+
+	pdu := bytes.NewBuffer(nil)
+	pdu.Write(orpcthis(0))
+	pdu.Write(ipid)
+	_ = binary.Write(pdu, binary.LittleEndian, uint32(1))
+	_ = binary.Write(pdu, binary.LittleEndian, uint16(1))
+	pdu.Write([]byte{0xce, 0xce})
+	_ = binary.Write(pdu, binary.LittleEndian, uint32(1))
+	pdu.Write(iidIWbemFetchSmartEnumBin)
+
+	req := newRPCRequest(3, q.service.proto.remUnknownIPID)
+	req.setAppData(pdu.Bytes())
+	wire, err := req.signData(q.service.proto)
+	if err != nil {
+		return err
+	}
+	reply, err := q.service.proto.roundTrip(ctx, wire)
+	if err != nil {
+		return err
+	}
+	msg, err := q.service.proto.responseMessage(reply.fragments)
+	if err != nil {
+		return err
+	}
+	opt, err := parseRemQueryInterfaceResponse(msg)
+	if err != nil {
+		return err
+	}
+
+	pdu.Reset()
+	pdu.Write(orpcthis(0))
+	pdu.Write(ipid)
+	req = newRPCRequest(3, opt.ipid)
+	req.setAppData(pdu.Bytes())
+	wire, err = req.signData(q.service.proto)
+	if err != nil {
+		return err
+	}
+	reply, err = q.service.proto.roundTrip(ctx, wire)
+	if err != nil {
+		return err
+	}
+	msg, err = q.service.proto.responseMessage(reply.fragments)
+	if err != nil {
+		return err
+	}
+	se, err := parseGetSmartEnumResponse(msg)
+	if err != nil {
+		return err
+	}
+	_ = q.service.proto.remRelease(ctx, opt.ipid)
+	q.interfaceIPID = se.ipid
+	q.proxyGUID = se.proxyGUID
+	q.smart = true
+	debugf("query optimize ok enum_ipid=%s proxy_guid=%s", q.interfaceIPID, previewHex(q.proxyGUID, 8))
+	return nil
+}
+
+// next retrieves the next result row from the query.
+func (q *QContext) next(ctx context.Context, timeout ...uint32) (map[string]*Property, error) {
+	if q.interfaceIPID == "" {
+		if err := q.start(ctx); err != nil {
+			return nil, err
+		}
+	}
+	requestTimeout := q.timeout
+	if len(timeout) > 0 {
+		requestTimeout = timeout[0]
+	}
+	var next func(context.Context, uint32) (*objectBlock, error)
+	mode := "slow"
+	if q.smart {
+		debugf("query next smart timeout_ms=%d ipid=%s", requestTimeout, q.interfaceIPID)
+		next = q.nextSmart
+		mode = "smart"
+	} else {
+		debugf("query next slow timeout_ms=%d ipid=%s", requestTimeout, q.interfaceIPID)
+		next = q.nextSlow
+	}
+	obj, err := q.nextObject(ctx, requestTimeout, mode, next)
+	if err != nil {
+		return nil, err
+	}
+	return obj.properties(
+		q.resultOptions.IgnoreDefaults,
+		q.resultOptions.IgnoreMissing,
+		q.resultOptions.LoadQualifiers,
+	)
+}
+
+func (q *QContext) nextObject(
+	ctx context.Context,
+	timeout uint32,
+	mode string,
+	next func(context.Context, uint32) (*objectBlock, error),
+) (*objectBlock, error) {
+	for {
+		obj, err := next(ctx, timeout)
+		if err == nil {
+			return obj, nil
+		}
+		if !isErrorCode(err, wbemSTimedOut) || timeout == WBEMNoWait {
+			return nil, err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		debugf("query next %s timed out timeout_ms=%d ipid=%s; retrying", mode, timeout, q.interfaceIPID)
+	}
+}
+
+func (q *QContext) nextSmart(ctx context.Context, timeout uint32) (*objectBlock, error) {
+	pdu := bytes.NewBuffer(nil)
+	pdu.Write(orpcthis(0))
+	pdu.Write(q.proxyGUID)
+	_ = binary.Write(pdu, binary.LittleEndian, timeout)
+	_ = binary.Write(pdu, binary.LittleEndian, uint32(1))
+
+	req := newRPCRequest(3, q.interfaceIPID)
+	req.setAppData(pdu.Bytes())
+	wire, err := req.signData(q.service.proto)
+	if err != nil {
+		return nil, err
+	}
+	reply, err := q.service.proto.roundTrip(ctx, wire)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := q.service.proto.responseMessage(reply.fragments)
+	if err != nil {
+		return nil, err
+	}
+	return parseSmartResponse(msg, q.classParts)
+}
+
+func (q *QContext) nextSlow(ctx context.Context, timeout uint32) (*objectBlock, error) {
+	pdu := bytes.NewBuffer(nil)
+	pdu.Write(orpcthis(0))
+	_ = binary.Write(pdu, binary.LittleEndian, timeout)
+	_ = binary.Write(pdu, binary.LittleEndian, uint32(1))
+
+	req := newRPCRequest(4, q.interfaceIPID)
+	req.setAppData(pdu.Bytes())
+	wire, err := req.signData(q.service.proto)
+	if err != nil {
+		return nil, err
+	}
+	reply, err := q.service.proto.roundTrip(ctx, wire)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := q.service.proto.responseMessage(reply.fragments)
+	if err != nil {
+		return nil, err
+	}
+	return parseNextBigResponse(msg)
+}
+
+// close releases the query resources on the remote server.
+func (q *QContext) close(ctx context.Context) error {
+	if q.interfaceIPID == "" {
+		return nil
+	}
+	debugf("query close ipid=%s", q.interfaceIPID)
+	err := q.service.proto.remRelease(ctx, q.interfaceIPID)
+	q.interfaceIPID = ""
+	q.classParts = map[string]*classPart{}
+	return err
+}
+
+// Collect executes the query and returns all result rows in a slice.
+func (q *QContext) Collect(ctx context.Context, options ...ResultOptions) ([]map[string]*Property, error) {
+	var rows []map[string]*Property
+	err := q.Run(ctx, func(q *QContext) error {
+		return q.Results(ctx, func(props map[string]*Property) error {
+			rows = append(rows, props)
+			return nil
+		}, options...)
+	})
+	return rows, err
+}
+
+// Each returns an iterator over the query result rows. The query is started
+// lazily on the first call to the iterator and closed when iteration ends.
+//
+//	for props, err := range qc.Each(ctx) {
+//	    if err != nil { break }
+//	    fmt.Println(props["Name"].Value)
+//	}
+func (q *QContext) Each(ctx context.Context) iter.Seq2[map[string]*Property, error] {
+	return func(yield func(map[string]*Property, error) bool) {
+		if err := q.start(ctx); err != nil {
+			yield(nil, err)
+			return
+		}
+		defer q.close(ctx)
+		for {
+			props, err := q.next(ctx)
+			if err != nil {
+				if isErrorCode(err, wbemSFalse) {
+					return
+				}
+				yield(nil, err)
+				return
+			}
+			if !yield(props, nil) {
+				return
+			}
+		}
+	}
+}

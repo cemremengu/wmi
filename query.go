@@ -25,8 +25,8 @@ type ResultOptions struct {
 // QContext holds the state for an in-progress WMI query.
 type QContext struct {
 	query         Query
-	conn          *Connection
-	service       *Service
+	conn          *connection
+	service       *service
 	flags         uint32
 	timeout       uint32
 	skipOptimize  bool
@@ -56,8 +56,7 @@ func DefaultQueryFlags() uint32 {
 	return WBEMFlagReturnImmediately | WBEMFlagForwardOnly
 }
 
-// Context creates a QContext bound to the given connection and service.
-func (q Query) Context(conn *Connection, service *Service) *QContext {
+func (q Query) context(conn *connection, svc *service) *QContext {
 	if q.Namespace == "" {
 		q.Namespace = "//./root/cimv2"
 	}
@@ -70,7 +69,7 @@ func (q Query) Context(conn *Connection, service *Service) *QContext {
 	return &QContext{
 		query:         q,
 		conn:          conn,
-		service:       service,
+		service:       svc,
 		flags:         DefaultQueryFlags(),
 		timeout:       60,
 		classParts:    make(map[string]*classPart),
@@ -152,8 +151,8 @@ func (q *QContext) results(
 // start begins the WMI query and prepares the result stream.
 func (q *QContext) start(ctx context.Context) error {
 	debugf("query start namespace=%s skip_optimize=%v flags=0x%08x", q.query.Namespace, q.skipOptimize, q.flags)
-	if q.conn.Namespace != q.query.Namespace {
-		if err := q.conn.LoginNTLM(ctx, q.service, q.query.Namespace); err != nil {
+	if q.conn.namespace != q.query.Namespace {
+		if err := q.conn.loginNTLM(ctx, q.service, q.query.Namespace); err != nil {
 			return err
 		}
 	}

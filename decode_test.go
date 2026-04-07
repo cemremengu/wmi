@@ -143,7 +143,7 @@ func TestGetArrayReferencesRejectsNonArrayReference(t *testing.T) {
 		Type:  cimTypeReference,
 		Value: "Win32_Process.Handle=\"1\"",
 	}
-	_, err := prop.GetArrayReferences(context.Background(), nil, nil, nil, false)
+	_, err := prop.GetArrayReferences(context.Background(), nil, nil, false)
 	require.Error(t, err)
 	require.True(
 		t,

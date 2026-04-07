@@ -6,18 +6,14 @@ import (
 )
 
 // Client is a high-level WMI client that owns both the connection and the
-// authenticated service. The easiest way to create one is [DialNTLM] or
-// [DialKerberos]:
+// authenticated service. Create one with [DialNTLM] or [DialKerberos]:
 //
 //	client, err := wmi.DialNTLM(ctx, "10.0.0.1", "admin", "secret")
 //	if err != nil { log.Fatal(err) }
 //	defer client.Close()
-//
-// For advanced use cases, create one with [NewClient] after connecting and
-// negotiating authentication explicitly.
 type Client struct {
-	Conn    *Connection
-	Service *Service
+	conn    *connection
+	service *service
 }
 
 // NTLMOption configures [DialNTLM].
@@ -65,14 +61,14 @@ func DialNTLM(ctx context.Context, host, username, password string, opts ...NTLM
 	for _, o := range opts {
 		o(&cfg)
 	}
-	conn := NewConnection(host, username, password)
-	conn.Domain = cfg.domain
-	service, err := conn.NegotiateNTLM(ctx)
+	conn := newConnection(host, username, password)
+	conn.domain = cfg.domain
+	svc, err := conn.negotiateNTLM(ctx)
 	if err != nil {
-		conn.Close()
+		conn.close()
 		return nil, err
 	}
-	return &Client{Conn: conn, Service: service}, nil
+	return &Client{conn: conn, service: svc}, nil
 }
 
 // DialKerberos connects to host and authenticates using Kerberos, returning a
@@ -89,30 +85,21 @@ func DialKerberos(
 	for _, o := range opts {
 		o(&cfg)
 	}
-	conn := NewConnection(host, username, password)
-	conn.Domain = domain
+	conn := newConnection(host, username, password)
+	conn.domain = domain
 	if cfg.kdcHost != "" {
-		conn.KDCHost = cfg.kdcHost
-		conn.KDCPort = cfg.kdcPort
+		conn.kdcHost = cfg.kdcHost
+		conn.kdcPort = cfg.kdcPort
 	}
 	if cfg.cache != nil {
-		conn.SetKerberosCache(cfg.cache)
+		conn.setKerberosCache(cfg.cache)
 	}
-	service, err := conn.NegotiateKerberos(ctx)
+	svc, err := conn.negotiateKerberos(ctx)
 	if err != nil {
-		conn.Close()
+		conn.close()
 		return nil, err
 	}
-	return &Client{Conn: conn, Service: service}, nil
-}
-
-// NewClient wraps an established connection and authenticated service into
-// a Client. The caller is responsible for having already called
-// [Connection.Connect] and one of the Negotiate methods.
-//
-// For most use cases, prefer [DialNTLM] or [DialKerberos] instead.
-func NewClient(conn *Connection, service *Service) *Client {
-	return &Client{Conn: conn, Service: service}
+	return &Client{conn: conn, service: svc}, nil
 }
 
 // Close releases the service binding and the underlying connection.
@@ -122,13 +109,13 @@ func (c *Client) Close() error {
 	}
 
 	var svcErr error
-	if c.Service != nil {
-		svcErr = c.Service.Close()
+	if c.service != nil {
+		svcErr = c.service.close()
 	}
 
 	var connErr error
-	if c.Conn != nil {
-		connErr = c.Conn.Close()
+	if c.conn != nil {
+		connErr = c.conn.close()
 	}
 
 	if svcErr != nil {
@@ -141,7 +128,7 @@ func (c *Client) Close() error {
 //
 //	qc := client.Query("SELECT Name FROM Win32_Process")
 func (c *Client) Query(wql string) *QContext {
-	return NewQuery(wql).Context(c.Conn, c.Service)
+	return NewQuery(wql).context(c.conn, c.service)
 }
 
 // Collect executes wql and returns all result rows in a slice.

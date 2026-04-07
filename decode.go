@@ -83,22 +83,20 @@ func (p *Property) baseType() uint16 { return p.Type &^ (cimArrayFlag | cimInher
 // GetReference resolves a single reference property and returns the referenced object's properties.
 func (p *Property) GetReference(
 	ctx context.Context,
-	conn *Connection,
-	service *Service,
+	client *Client,
 	filterProps []string,
 ) (map[string]*Property, error) {
 	value, ok := p.Value.(string)
 	if !ok {
 		return nil, fmt.Errorf("property %s is not a reference", p.Name)
 	}
-	return p.getReference(ctx, conn, service, value, filterProps)
+	return p.getReference(ctx, client, value, filterProps)
 }
 
 // GetArrayReferences resolves each element of an array-of-references property.
 func (p *Property) GetArrayReferences(
 	ctx context.Context,
-	conn *Connection,
-	service *Service,
+	client *Client,
 	filterProps []string,
 	missingAsNil bool,
 ) ([]map[string]*Property, error) {
@@ -112,7 +110,7 @@ func (p *Property) GetArrayReferences(
 		if !ok {
 			return nil, fmt.Errorf("property %s contains a non-string reference value", p.Name)
 		}
-		props, err := p.getReference(ctx, conn, service, value, filterProps)
+		props, err := p.getReference(ctx, client, value, filterProps)
 		if err != nil {
 			if missingAsNil && errors.Is(err, &Error{Code: wbemSFalse}) {
 				refs = append(refs, nil)
@@ -127,8 +125,7 @@ func (p *Property) GetArrayReferences(
 
 func (p *Property) getReference(
 	ctx context.Context,
-	conn *Connection,
-	service *Service,
+	client *Client,
 	value string,
 	filterProps []string,
 ) (map[string]*Property, error) {
@@ -148,7 +145,7 @@ func (p *Property) getReference(
 	query := NewQuery(
 		fmt.Sprintf("SELECT %s FROM %s WHERE %s", props, parts[0], strings.Join(strings.Split(parts[1], ","), " AND ")),
 	)
-	rows, err := query.Context(conn, service).Collect(ctx)
+	rows, err := query.context(client.conn, client.service).Collect(ctx)
 	if err != nil {
 		return nil, err
 	}

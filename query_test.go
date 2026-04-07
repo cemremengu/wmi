@@ -9,7 +9,7 @@ import (
 )
 
 func TestQContextConfigurationHelpers(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil).SetTimeout(1234)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil).SetTimeout(1234)
 	require.Equal(t, uint32(1234), qc.timeout)
 	require.False(t, qc.resultOptions.LoadQualifiers, "expected qualifiers to be disabled by default")
 	require.Same(t, qc, qc.SetResultOptions(ResultOptions{
@@ -24,7 +24,7 @@ func TestQContextConfigurationHelpers(t *testing.T) {
 }
 
 func TestQContextNextObjectRetriesTimedOut(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
 	want := &objectBlock{}
 	calls := 0
 
@@ -41,7 +41,7 @@ func TestQContextNextObjectRetriesTimedOut(t *testing.T) {
 }
 
 func TestQContextNextObjectDoesNotRetryNoWait(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
 	calls := 0
 
 	_, err := qc.nextObject(
@@ -58,7 +58,7 @@ func TestQContextNextObjectDoesNotRetryNoWait(t *testing.T) {
 }
 
 func TestQContextNextObjectRespectsContextCancellation(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	calls := 0
@@ -73,13 +73,13 @@ func TestQContextNextObjectRespectsContextCancellation(t *testing.T) {
 
 func TestQContextEachStopsOnBreak(t *testing.T) {
 	// Each returns an iterator; verify the function signature compiles.
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
 	seq := qc.Each(context.Background())
 	require.NotNil(t, seq, "Each() should return a non-nil iterator")
 }
 
 func TestQContextNextObjectPersistentTimeoutExitsOnDeadline(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
+	qc := NewQuery("SELECT * FROM Win32_Process").context(nil, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
 	defer cancel()
 	calls := 0

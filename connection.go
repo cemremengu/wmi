@@ -9,84 +9,78 @@ import (
 	"time"
 )
 
-// Connection holds the parameters and state for a WMI connection to a remote host.
-type Connection struct {
-	Host      string
-	Port      int
-	Username  string
-	Password  string
-	Domain    string
-	Namespace string
-	KDCHost   string
-	KDCPort   int
+// connection holds the parameters and state for a WMI connection to a remote host.
+type connection struct {
+	host      string
+	port      int
+	username  string
+	password  string
+	domain    string
+	namespace string
+	kdcHost   string
+	kdcPort   int
 
 	base          *protocol
 	kerberosCache *KerberosCache
 }
 
-// Service represents an authenticated WMI service binding.
-type Service struct {
+// service represents an authenticated WMI service binding.
+type service struct {
 	proto *protocol
 }
 
-// NewConnection creates a new Connection with sensible defaults.
-func NewConnection(host, username, password string) *Connection {
-	return &Connection{
-		Host:          host,
-		Port:          135,
-		Username:      username,
-		Password:      password,
-		Namespace:     "//./root/cimv2",
-		KDCHost:       host,
-		KDCPort:       88,
+// newConnection creates a new connection with sensible defaults.
+func newConnection(host, username, password string) *connection {
+	return &connection{
+		host:          host,
+		port:          135,
+		username:      username,
+		password:      password,
+		namespace:     "//./root/cimv2",
+		kdcHost:       host,
+		kdcPort:       88,
 		kerberosCache: NewKerberosCache(""),
 	}
 }
 
-// IsConnected reports whether the connection has an active underlying protocol.
-func (c *Connection) IsConnected() bool {
+func (c *connection) isConnected() bool {
 	return c != nil && c.base != nil
 }
 
-// HasValidKeys reports whether the Kerberos cache contains keys that have not yet expired.
-func (c *Connection) HasValidKeys(offset ...time.Duration) bool {
+func (c *connection) hasValidKeys(offset ...time.Duration) bool {
 	if c == nil || c.kerberosCache == nil {
 		return false
 	}
 	return c.kerberosCache.HasValidKeys(offset...)
 }
 
-// SetKerberosCache replaces the Kerberos ticket cache used by this connection.
-func (c *Connection) SetKerberosCache(cache *KerberosCache) {
+func (c *connection) setKerberosCache(cache *KerberosCache) {
 	if cache == nil {
 		cache = NewKerberosCache("")
 	}
 	c.kerberosCache = cache
 }
 
-// SetKerberosCacheFile sets the Kerberos cache to a file-backed cache at the given path.
-func (c *Connection) SetKerberosCacheFile(filePath string) {
-	c.SetKerberosCache(NewKerberosCache(filePath))
+func (c *connection) setKerberosCacheFile(filePath string) {
+	c.setKerberosCache(NewKerberosCache(filePath))
 }
 
-// Connect establishes the underlying TCP connection to the host.
-func (c *Connection) Connect(ctx context.Context) error {
+func (c *connection) dial(ctx context.Context) error {
 	if c.base != nil {
 		return nil
 	}
-	debugf("connect start host=%s port=%d", c.Host, c.Port)
-	p, err := dialProtocol(ctx, c.Host, c.Port)
+	debugf("connect start host=%s port=%d", c.host, c.port)
+	p, err := dialProtocol(ctx, c.host, c.port)
 	if err != nil {
-		debugf("connect failed host=%s port=%d err=%v", c.Host, c.Port, err)
+		debugf("connect failed host=%s port=%d err=%v", c.host, c.port, err)
 		return err
 	}
 	c.base = p
-	debugf("connect ok host=%s port=%d", c.Host, c.Port)
+	debugf("connect ok host=%s port=%d", c.host, c.port)
 	return nil
 }
 
-// Close closes the underlying connection and releases resources.
-func (c *Connection) Close() error {
+func (c *connection) close() error {
 	if c.base == nil {
 		return nil
 	}
@@ -95,20 +89,18 @@ func (c *Connection) Close() error {
 	return err
 }
 
-// Close closes the service binding and releases its resources.
-func (s *Service) Close() error {
+func (s *service) close() error {
 	if s == nil || s.proto == nil {
 		return nil
 	}
 	return s.proto.close()
 }
 
-// NegotiateKerberos performs Kerberos authentication and returns an authenticated Service.
-func (c *Connection) NegotiateKerberos(ctx context.Context) (*Service, error) {
-	if c.Domain == "" {
+func (c *connection) negotiateKerberos(ctx context.Context) (*service, error) {
+	if c.domain == "" {
 		return nil, errors.New("domain is required for Kerberos authentication")
 	}
-	if err := c.Connect(ctx); err != nil {
+	if err := c.dial(ctx); err != nil {
 		return nil, err
 	}
 	p := c.base
@@ -116,26 +108,26 @@ func (c *Connection) NegotiateKerberos(ctx context.Context) (*Service, error) {
 	p.contextID = 79231
 	debugf(
 		"kerberos negotiate start host=%s context_id=%d auth_level=%d cache_valid=%v",
-		c.Host,
+		c.host,
 		p.contextID,
 		p.authLevel,
 		c.kerberosCache.hasValidKeys(90*time.Second),
 	)
 
 	if !c.kerberosCache.hasValidKeys(90 * time.Second) {
-		asRepBytes, baseKey, err := getTGT(ctx, c.Username, c.Password, c.Domain, c.KDCHost, c.KDCPort)
+		asRepBytes, baseKey, err := getTGT(ctx, c.username, c.password, c.domain, c.kdcHost, c.kdcPort)
 		if err != nil {
 			return nil, err
 		}
 		ticket, serviceKey, etype, expiresAt, err := getTGS(
 			ctx,
-			c.Username,
-			c.Domain,
-			c.Host,
+			c.username,
+			c.domain,
+			c.host,
 			asRepBytes,
 			baseKey,
-			c.KDCHost,
-			c.KDCPort,
+			c.kdcHost,
+			c.kdcPort,
 		)
 		if err != nil {
 			return nil, err
@@ -154,34 +146,33 @@ func (c *Connection) NegotiateKerberos(ctx context.Context) (*Service, error) {
 		debugf("kerberos interface binding failed err=%v", err)
 		return nil, err
 	}
-	if err := c.LoginNTLM(ctx, &Service{proto: svcProto}, "root/cimv2"); err != nil {
+	if err := c.loginNTLM(ctx, &service{proto: svcProto}, "root/cimv2"); err != nil {
 		debugf("kerberos post-bind login failed err=%v", err)
 		_ = svcProto.close()
 		return nil, err
 	}
 	debugf("kerberos negotiate ok service_context_id=%d current_ipid=%s", svcProto.contextID, svcProto.currentIPID)
-	return &Service{proto: svcProto}, nil
+	return &service{proto: svcProto}, nil
 }
 
-// NegotiateNTLM performs NTLM authentication and returns an authenticated Service.
-func (c *Connection) NegotiateNTLM(ctx context.Context) (*Service, error) {
-	service, err := c.negotiateNTLM(ctx, rpcCAuthNLevelPktPrivacy)
+func (c *connection) negotiateNTLM(ctx context.Context) (*service, error) {
+	svc, err := c.negotiateNTLMAuth(ctx, rpcCAuthNLevelPktPrivacy)
 	if err == nil || !shouldRetryNTLMActivation(err) {
-		return service, err
+		return svc, err
 	}
 	debugf("ntlm pkt privacy activation failed err=%v; retrying with auth_level=%d", err, rpcCAuthNLevelPktIntegrity)
 	c.resetBase()
-	return c.negotiateNTLM(ctx, rpcCAuthNLevelPktIntegrity)
+	return c.negotiateNTLMAuth(ctx, rpcCAuthNLevelPktIntegrity)
 }
 
-func (c *Connection) negotiateNTLM(ctx context.Context, authLevel byte) (*Service, error) {
-	if err := c.Connect(ctx); err != nil {
+func (c *connection) negotiateNTLMAuth(ctx context.Context, authLevel byte) (*service, error) {
+	if err := c.dial(ctx); err != nil {
 		return nil, err
 	}
 	p := c.base
 	p.authLevel = authLevel
 	p.contextID = 4242
-	debugf("ntlm negotiate start host=%s context_id=%d auth_level=%d", c.Host, p.contextID, p.authLevel)
+	debugf("ntlm negotiate start host=%s context_id=%d auth_level=%d", c.host, p.contextID, p.authLevel)
 	if err := c.bindNTLM(ctx, p, iidIRemoteSCMActivator); err != nil {
 		debugf("ntlm bind scm failed err=%v", err)
 		return nil, err
@@ -191,16 +182,16 @@ func (c *Connection) negotiateNTLM(ctx context.Context, authLevel byte) (*Servic
 		debugf("ntlm interface binding failed err=%v", err)
 		return nil, err
 	}
-	if err := c.LoginNTLM(ctx, &Service{proto: svcProto}, "root/cimv2"); err != nil {
+	if err := c.loginNTLM(ctx, &service{proto: svcProto}, "root/cimv2"); err != nil {
 		debugf("ntlm post-bind login failed err=%v", err)
 		_ = svcProto.close()
 		return nil, err
 	}
 	debugf("ntlm negotiate ok service_context_id=%d current_ipid=%s", svcProto.contextID, svcProto.currentIPID)
-	return &Service{proto: svcProto}, nil
+	return &service{proto: svcProto}, nil
 }
 
-func (c *Connection) bindNTLM(ctx context.Context, p *protocol, iid []byte) error {
+func (c *connection) bindNTLM(ctx context.Context, p *protocol, iid []byte) error {
 	negotiate, flags := buildNTLMNegotiate()
 	debugf(
 		"ntlm bind send context_id=%d auth_level=%d iid=%s negotiate_len=%d flags=0x%08x",
@@ -242,10 +233,10 @@ func (c *Connection) bindNTLM(ctx context.Context, p *protocol, iid []byte) erro
 	)
 
 	authMsg, flags, exportedSessionKey := buildNTLMAuthenticate(
-		c.Username,
-		c.Password,
-		c.Domain,
-		c.Host,
+		c.username,
+		c.password,
+		c.domain,
+		c.host,
 		flags,
 		challenge,
 	)
@@ -271,7 +262,7 @@ func (c *Connection) bindNTLM(ctx context.Context, p *protocol, iid []byte) erro
 	return p.writeOnly(ctx, auth3.bytes())
 }
 
-func (c *Connection) bindKerberos(ctx context.Context, p *protocol, iid []byte) error {
+func (c *connection) bindKerberos(ctx context.Context, p *protocol, iid []byte) error {
 	if c.kerberosCache == nil || len(c.kerberosCache.ticket) == 0 || len(c.kerberosCache.serviceKey) == 0 {
 		return errors.New("kerberos cache is empty")
 	}
@@ -285,8 +276,8 @@ func (c *Connection) bindKerberos(ctx context.Context, p *protocol, iid []byte) 
 	)
 
 	apReq, err := buildAPReq(
-		c.Username,
-		c.Domain,
+		c.username,
+		c.domain,
 		c.kerberosCache.ticket,
 		c.kerberosCache.serviceKey,
 		c.kerberosCache.etype,
@@ -374,7 +365,7 @@ func (c *Connection) bindKerberos(ctx context.Context, p *protocol, iid []byte) 
 	return nil
 }
 
-func (c *Connection) ifBinding(
+func (c *connection) ifBinding(
 	ctx context.Context,
 	base *protocol,
 	minAuthLevel byte,
@@ -414,7 +405,7 @@ func (c *Connection) ifBinding(
 	if err != nil {
 		return nil, err
 	}
-	activate, err := parseRemoteCreateInstanceResponse(c.Host, msg)
+	activate, err := parseRemoteCreateInstanceResponse(c.host, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +422,7 @@ func (c *Connection) ifBinding(
 		activate.ipid,
 	)
 
-	p, err := dialProtocol(ctx, c.Host, port)
+	p, err := dialProtocol(ctx, c.host, port)
 	if err != nil {
 		p, err = dialProtocol(ctx, host, port)
 		if err != nil {
@@ -457,9 +448,8 @@ func (c *Connection) ifBinding(
 	return p, nil
 }
 
-// LoginNTLM performs an NTLMLogin on the given service to switch to the specified namespace.
-func (c *Connection) LoginNTLM(ctx context.Context, service *Service, namespace string) error {
-	if service == nil || service.proto == nil {
+func (c *connection) loginNTLM(ctx context.Context, svc *service, namespace string) error {
+	if svc == nil || svc.proto == nil {
 		return errors.New("service is nil")
 	}
 	if !bytes.HasPrefix([]byte(namespace), []byte("//")) {
@@ -473,25 +463,25 @@ func (c *Connection) LoginNTLM(ctx context.Context, service *Service, namespace 
 	_ = binary.Write(pdu, binary.LittleEndian, int32(0))
 	pdu.Write(getNull())
 
-	req := newRPCRequest(6, service.proto.currentIPID)
+	req := newRPCRequest(6, svc.proto.currentIPID)
 	req.setAppData(pdu.Bytes())
 	debugf(
 		"login start namespace=%s ipid=%s app_len=%d auth_type=%d auth_level=%d",
 		namespace,
-		service.proto.currentIPID,
+		svc.proto.currentIPID,
 		len(pdu.Bytes()),
-		service.proto.authType,
-		service.proto.authLevel,
+		svc.proto.authType,
+		svc.proto.authLevel,
 	)
-	wire, err := req.signData(service.proto)
+	wire, err := req.signData(svc.proto)
 	if err != nil {
 		return err
 	}
-	reply, err := service.proto.roundTrip(ctx, wire)
+	reply, err := svc.proto.roundTrip(ctx, wire)
 	if err != nil {
 		return err
 	}
-	msg, err := service.proto.responseMessage(reply.fragments)
+	msg, err := svc.proto.responseMessage(reply.fragments)
 	if err != nil {
 		return err
 	}
@@ -499,8 +489,8 @@ func (c *Connection) LoginNTLM(ctx context.Context, service *Service, namespace 
 	if err != nil {
 		return err
 	}
-	service.proto.currentIPID = resp.ipid
-	c.Namespace = namespace
+	svc.proto.currentIPID = resp.ipid
+	c.namespace = namespace
 	debugf("login ok namespace=%s new_ipid=%s", namespace, resp.ipid)
 	return nil
 }
@@ -541,7 +531,7 @@ func maxUint16(a, b uint16) uint16 {
 	return b
 }
 
-func (c *Connection) resetBase() {
+func (c *connection) resetBase() {
 	if c.base == nil {
 		return
 	}

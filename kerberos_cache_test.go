@@ -28,9 +28,9 @@ func TestKerberosCacheSaveLoad(t *testing.T) {
 }
 
 func TestConnectionCacheHelpers(t *testing.T) {
-	conn := NewConnection("host.example.com", "alice", "secret")
-	require.False(t, conn.IsConnected(), "new connection should not be connected")
-	require.False(t, conn.HasValidKeys(), "new connection should not have valid kerberos keys")
+	conn := newConnection("host.example.com", "alice", "secret")
+	require.False(t, conn.isConnected(), "new connection should not be connected")
+	require.False(t, conn.hasValidKeys(), "new connection should not have valid kerberos keys")
 
 	filePath := filepath.Join(t.TempDir(), "krb-cache.json")
 	cache := NewKerberosCache(filePath)
@@ -38,6 +38,6 @@ func TestConnectionCacheHelpers(t *testing.T) {
 	cache.setTGS([]byte("ticket"), []byte("service-key"), 23, time.Now().Add(5*time.Minute))
 	require.NoError(t, cache.Save())
 
-	conn.SetKerberosCacheFile(filePath)
-	require.True(t, conn.HasValidKeys(), "expected connection to pick up persisted kerberos cache")
+	conn.setKerberosCacheFile(filePath)
+	require.True(t, conn.hasValidKeys(), "expected connection to pick up persisted kerberos cache")
 }

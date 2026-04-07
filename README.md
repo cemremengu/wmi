@@ -88,26 +88,6 @@ lifetime, so multiple queries reuse them automatically. Use
 `WithKerberosCache` with a file-backed cache (`NewKerberosCache(path)`)
 to persist tickets to disk across process restarts.
 
-### Advanced connection management
-
-For full control over connection lifecycle, you can use the lower-level API directly:
-
-```go
-conn := wmi.NewConnection(host, username, password)
-conn.Domain = "EXAMPLE.COM"
-service, err := conn.NegotiateKerberos(ctx)
-if err != nil { 
-	conn.Close()
-	log.Fatal(err) 
-}
-client := wmi.NewClient(conn, service)
-defer client.Close()
-```
-
-`conn.IsConnected()` reports whether the base DCOM connection is open, and
-`conn.HasValidKeys()` reports whether the current Kerberos cache still has
-usable tickets.
-
 ## Debug logging
 
 The package exposes opt-in debug logging for the DCOM/RPC authentication and

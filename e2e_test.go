@@ -19,7 +19,7 @@ func e2eEnv(key, fallback string) string {
 	return fallback
 }
 
-func e2eConnect(t *testing.T) (*Connection, *Service) {
+func e2eConnect(t *testing.T) (*connection, *service) {
 	t.Helper()
 
 	host := e2eEnv("WMI_HOST", "localhost")
@@ -29,34 +29,34 @@ func e2eConnect(t *testing.T) (*Connection, *Service) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	conn := NewConnection(host, user, pass)
+	conn := newConnection(host, user, pass)
 
-	require.NoError(t, conn.Connect(ctx), "connect")
-	t.Cleanup(func() { conn.Close() })
+	require.NoError(t, conn.dial(ctx), "connect")
+	t.Cleanup(func() { conn.close() })
 
-	service, err := conn.NegotiateNTLM(ctx)
+	svc, err := conn.negotiateNTLM(ctx)
 	require.NoError(t, err, "negotiate ntlm")
-	t.Cleanup(func() { service.Close() })
+	t.Cleanup(func() { svc.close() })
 
-	return conn, service
+	return conn, svc
 }
 
 func TestE2ENTLMConnect(t *testing.T) {
-	conn, service := e2eConnect(t)
+	conn, svc := e2eConnect(t)
 
-	require.True(t, conn.IsConnected(), "expected connection to be active after NegotiateNTLM")
-	_ = service
+	require.True(t, conn.isConnected(), "expected connection to be active after negotiateNTLM")
+	_ = svc
 }
 
 func TestE2EQueryWin32OperatingSystem(t *testing.T) {
-	conn, service := e2eConnect(t)
+	conn, svc := e2eConnect(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var count int
 	query := NewQuery("SELECT Caption, Version FROM Win32_OperatingSystem")
-	for props, err := range query.Context(conn, service).Each(ctx) {
+	for props, err := range query.context(conn, svc).Each(ctx) {
 		require.NoError(t, err, "query Win32_OperatingSystem")
 		count++
 		caption, ok := props["Caption"]
@@ -70,14 +70,14 @@ func TestE2EQueryWin32OperatingSystem(t *testing.T) {
 }
 
 func TestE2EQueryWin32Process(t *testing.T) {
-	conn, service := e2eConnect(t)
+	conn, svc := e2eConnect(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var count int
 	query := NewQuery("SELECT Name, ProcessId FROM Win32_Process")
-	for _, err := range query.Context(conn, service).Each(ctx) {
+	for _, err := range query.context(conn, svc).Each(ctx) {
 		require.NoError(t, err, "query Win32_Process")
 		count++
 	}
@@ -85,14 +85,14 @@ func TestE2EQueryWin32Process(t *testing.T) {
 }
 
 func TestE2EInvalidQuery(t *testing.T) {
-	conn, service := e2eConnect(t)
+	conn, svc := e2eConnect(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	query := NewQuery("SELECT * FROM FakeNonExistentClass")
 	var gotErr error
-	for _, err := range query.Context(conn, service).Each(ctx) {
+	for _, err := range query.context(conn, svc).Each(ctx) {
 		gotErr = err
 		break
 	}
@@ -121,9 +121,9 @@ func e2eDialNTLM(t *testing.T) *Client {
 func TestE2EDialNTLM(t *testing.T) {
 	client := e2eDialNTLM(t)
 
-	require.NotNil(t, client.Conn, "expected non-nil connection")
-	require.NotNil(t, client.Service, "expected non-nil service")
-	require.True(t, client.Conn.IsConnected(), "expected connection to be active")
+	require.NotNil(t, client.conn, "expected non-nil connection")
+	require.NotNil(t, client.service, "expected non-nil service")
+	require.True(t, client.conn.isConnected(), "expected connection to be active")
 }
 
 func TestE2ECollectDecoded(t *testing.T) {

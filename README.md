@@ -96,7 +96,10 @@ For full control over connection lifecycle, you can use the lower-level API dire
 conn := wmi.NewConnection(host, username, password)
 conn.Domain = "EXAMPLE.COM"
 service, err := conn.NegotiateKerberos(ctx)
-if err != nil { log.Fatal(err) }
+if err != nil { 
+	conn.Close()
+	log.Fatal(err) 
+}
 client := wmi.NewClient(conn, service)
 defer client.Close()
 ```

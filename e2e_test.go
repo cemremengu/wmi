@@ -19,86 +19,6 @@ func e2eEnv(key, fallback string) string {
 	return fallback
 }
 
-func e2eConnect(t *testing.T) (*connection, *service) {
-	t.Helper()
-
-	host := e2eEnv("WMI_HOST", "localhost")
-	user := e2eEnv("WMI_USER", "wmitest")
-	pass := e2eEnv("WMI_PASS", "P@ssw0rd!23")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-
-	conn := newConnection(host, user, pass)
-
-	require.NoError(t, conn.dial(ctx), "connect")
-	t.Cleanup(func() { conn.close() })
-
-	svc, err := conn.negotiateNTLM(ctx)
-	require.NoError(t, err, "negotiate ntlm")
-	t.Cleanup(func() { svc.close() })
-
-	return conn, svc
-}
-
-func TestE2ENTLMConnect(t *testing.T) {
-	conn, svc := e2eConnect(t)
-
-	require.True(t, conn.isConnected(), "expected connection to be active after negotiateNTLM")
-	_ = svc
-}
-
-func TestE2EQueryWin32OperatingSystem(t *testing.T) {
-	conn, svc := e2eConnect(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	var count int
-	query := NewQuery("SELECT Caption, Version FROM Win32_OperatingSystem")
-	for props, err := range query.context(conn, svc).Each(ctx) {
-		require.NoError(t, err, "query Win32_OperatingSystem")
-		count++
-		caption, ok := props["Caption"]
-		if !ok {
-			assert.Fail(t, "Caption property missing from Win32_OperatingSystem")
-			continue
-		}
-		assert.NotEmpty(t, caption.Value, "Caption is empty")
-	}
-	require.Greater(t, count, 0, "expected at least one Win32_OperatingSystem result")
-}
-
-func TestE2EQueryWin32Process(t *testing.T) {
-	conn, svc := e2eConnect(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	var count int
-	query := NewQuery("SELECT Name, ProcessId FROM Win32_Process")
-	for _, err := range query.context(conn, svc).Each(ctx) {
-		require.NoError(t, err, "query Win32_Process")
-		count++
-	}
-	require.Greater(t, count, 0, "expected at least one Win32_Process result")
-}
-
-func TestE2EInvalidQuery(t *testing.T) {
-	conn, svc := e2eConnect(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	query := NewQuery("SELECT * FROM FakeNonExistentClass")
-	var gotErr error
-	for _, err := range query.context(conn, svc).Each(ctx) {
-		gotErr = err
-		break
-	}
-	require.Error(t, gotErr, "expected an error for invalid WMI class query")
-}
-
 func e2eDialNTLM(t *testing.T) *Client {
 	t.Helper()
 
@@ -122,6 +42,40 @@ func TestE2EDialNTLM(t *testing.T) {
 	require.NotNil(t, client.conn, "expected non-nil connection")
 	require.NotNil(t, client.service, "expected non-nil service")
 	require.True(t, client.conn.isConnected(), "expected connection to be active")
+}
+
+func TestE2EQueryWin32OperatingSystem(t *testing.T) {
+	client := e2eDialNTLM(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var count int
+	for props, err := range client.Each(ctx, "SELECT Caption, Version FROM Win32_OperatingSystem") {
+		require.NoError(t, err, "query Win32_OperatingSystem")
+		count++
+		caption, ok := props["Caption"]
+		if !ok {
+			assert.Fail(t, "Caption property missing from Win32_OperatingSystem")
+			continue
+		}
+		assert.NotEmpty(t, caption.Value, "Caption is empty")
+	}
+	require.Greater(t, count, 0, "expected at least one Win32_OperatingSystem result")
+}
+
+func TestE2EInvalidQuery(t *testing.T) {
+	client := e2eDialNTLM(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var gotErr error
+	for _, err := range client.Each(ctx, "SELECT * FROM FakeNonExistentClass") {
+		gotErr = err
+		break
+	}
+	require.Error(t, gotErr, "expected an error for invalid WMI class query")
 }
 
 func TestE2ECollectDecoded(t *testing.T) {

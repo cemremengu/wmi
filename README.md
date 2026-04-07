@@ -23,6 +23,7 @@ Pure Go cross-platform WMI client. Query remote Windows hosts from Linux or Wind
 - [ ] IWbemServices_ExecQueryAsync (async WMI queries)
 - [ ] WMI method invocation (ExecMethod)
 - [ ] ExecNotificationQuery (event subscriptions)
+- [ ] Kerberos implementation real world (e2e) testing
 
 ## Usage
 

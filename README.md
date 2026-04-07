@@ -1,6 +1,7 @@
 # wmi
 
 [![CI](https://github.com/cemremengu/wmi/actions/workflows/ci.yml/badge.svg)](https://github.com/cemremengu/wmi/actions/workflows/ci.yml)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/cemremengu/wmi)](https://pkg.go.dev/github.com/cemremengu/wmi)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cemremengu/wmi)](https://goreportcard.com/report/github.com/cemremengu/wmi)
 
 Pure Go cross-platform WMI client. Query remote Windows hosts from Linux or Windows over DCOM/RPC using NTLM v2 or Kerberos, no CGo or COM dependencies

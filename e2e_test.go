@@ -5,6 +5,7 @@ package wmi
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,17 +20,46 @@ func e2eEnv(key, fallback string) string {
 	return fallback
 }
 
+type e2eConfig struct {
+	host    string
+	user    string
+	pass    string
+	domain  string
+	realm   string
+	kdcHost string
+	kdcPort int
+}
+
+func loadE2EConfig() e2eConfig {
+	port := 88
+	if v := os.Getenv("WMI_KDC_PORT"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			port = parsed
+		}
+	}
+
+	host := e2eEnv("WMI_HOST", "localhost")
+	return e2eConfig{
+		host:    host,
+		user:    e2eEnv("WMI_USER", "wmitest"),
+		pass:    e2eEnv("WMI_PASS", "P@ssw0rd!23"),
+		domain:  os.Getenv("WMI_DOMAIN"),
+		realm:   e2eEnv("WMI_REALM", os.Getenv("WMI_DOMAIN")),
+		kdcHost: e2eEnv("WMI_KDC_HOST", host),
+		kdcPort: port,
+	}
+}
+
 func e2eConnect(t *testing.T) (*connection, *service) {
 	t.Helper()
 
-	host := e2eEnv("WMI_HOST", "localhost")
-	user := e2eEnv("WMI_USER", "wmitest")
-	pass := e2eEnv("WMI_PASS", "P@ssw0rd!23")
+	cfg := loadE2EConfig()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	conn := newConnection(host, user, pass)
+	conn := newConnection(cfg.host, cfg.user, cfg.pass)
+	conn.domain = cfg.domain
 
 	require.NoError(t, conn.dial(ctx), "connect")
 	t.Cleanup(func() { conn.close() })
@@ -102,14 +132,17 @@ func TestE2EInvalidQuery(t *testing.T) {
 func e2eDialNTLM(t *testing.T) *Client {
 	t.Helper()
 
-	host := e2eEnv("WMI_HOST", "localhost")
-	user := e2eEnv("WMI_USER", "wmitest")
-	pass := e2eEnv("WMI_PASS", "P@ssw0rd!23")
+	cfg := loadE2EConfig()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	client, err := DialNTLM(ctx, host, user, pass)
+	var opts []NTLMOption
+	if cfg.domain != "" {
+		opts = append(opts, WithDomain(cfg.domain))
+	}
+
+	client, err := DialNTLM(ctx, cfg.host, cfg.user, cfg.pass, opts...)
 	require.NoError(t, err, "DialNTLM")
 	t.Cleanup(func() { client.Close() })
 

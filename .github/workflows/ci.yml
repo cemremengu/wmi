@@ -29,8 +29,8 @@ jobs:
         with:
           version: latest
 
-  tests:
-    name: Tests
+  test-ntlm:
+    name: Test NTLM
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -62,4 +62,92 @@ jobs:
           WMI_HOST: localhost
           WMI_USER: wmitest
           WMI_PASS: "P@ssw0rd!23"
+        run: go test -race -tags e2e -v -count=1 -timeout 120s
+
+  test-kerberos:
+    name: Test Kerberos
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Active Directory domain services
+        shell: powershell
+        run: |
+          Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+
+      - name: Configure Kerberos domain controller
+        shell: powershell
+        run: |
+          $domainNetbios = "WMI"
+          $domainName = "wmi.test"
+          $testUser = "wmitest"
+          $testPass = "P@ssw0rd!23"
+          $safeModePass = ConvertTo-SecureString "P@ssw0rd!23-DSRM" -AsPlainText -Force
+          $userPass = ConvertTo-SecureString $testPass -AsPlainText -Force
+          $fqdn = "$env:COMPUTERNAME.$domainName"
+
+          Import-Module ADDSDeployment
+          Install-ADDSForest `
+            -DomainName $domainName `
+            -DomainNetbiosName $domainNetbios `
+            -InstallDns `
+            -NoRebootOnCompletion `
+            -SafeModeAdministratorPassword $safeModePass `
+            -Force
+
+          Start-Sleep -Seconds 30
+
+          foreach ($serviceName in "DNS", "Kdc", "Netlogon", "NTDS", "Winmgmt") {
+            Set-Service -Name $serviceName -StartupType Automatic -ErrorAction SilentlyContinue
+            Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+          }
+
+          Import-Module ActiveDirectory
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 18; $attempt++) {
+            try {
+              Get-ADDomain -Identity $domainName | Out-Null
+              $ready = $true
+              break
+            } catch {
+              Start-Sleep -Seconds 10
+            }
+          }
+          if (-not $ready) {
+            throw "Active Directory did not become ready without a reboot"
+          }
+
+          New-ADUser `
+            -Name $testUser `
+            -SamAccountName $testUser `
+            -UserPrincipalName "$testUser@$domainName" `
+            -AccountPassword $userPass `
+            -Enabled $true `
+            -PasswordNeverExpires $true
+          Add-ADGroupMember -Identity "Domain Admins" -Members $testUser
+
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_HOST=$fqdn"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_USER=$testUser"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_PASS=$testPass"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_DOMAIN=$domainNetbios"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_REALM=$($domainName.ToUpperInvariant())"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_HOST=$fqdn"
+          Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_PORT=88"
+
+      - name: Verify Kerberos services
+        shell: powershell
+        run: |
+          Get-Service DNS, Kdc, Netlogon, NTDS, Winmgmt | Select-Object Name, Status
+          Get-WmiObject Win32_OperatingSystem | Select-Object -Property CSName, Caption
+
+      - name: Run tests
+        shell: cmd
         run: go test -race -tags e2e -v -count=1 -timeout 120s

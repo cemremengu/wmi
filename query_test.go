@@ -12,8 +12,6 @@ func TestQContextConfigurationHelpers(t *testing.T) {
 	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil).SetTimeout(1234)
 	require.Equal(t, uint32(1234), qc.timeout)
 	require.False(t, qc.resultOptions.LoadQualifiers, "expected qualifiers to be disabled by default")
-	require.False(t, qc.IsOptimized(), "unexpected optimized state")
-
 	require.Same(t, qc, qc.SetResultOptions(ResultOptions{
 		IgnoreDefaults: true,
 		IgnoreMissing:  true,
@@ -23,9 +21,6 @@ func TestQContextConfigurationHelpers(t *testing.T) {
 	require.True(t, qc.resultOptions.IgnoreDefaults)
 	require.True(t, qc.resultOptions.IgnoreMissing)
 	require.False(t, qc.resultOptions.LoadQualifiers)
-
-	qc.smart = true
-	require.True(t, qc.IsOptimized(), "expected optimized state after smart enum is enabled")
 }
 
 func TestQContextNextObjectRetriesTimedOut(t *testing.T) {
@@ -43,16 +38,6 @@ func TestQContextNextObjectRetriesTimedOut(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, want, got)
 	require.Equal(t, 2, calls)
-}
-
-func TestQContextRunRequiresCallback(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
-	require.Error(t, qc.Run(context.Background(), nil), "Run() expected an error when callback is nil")
-}
-
-func TestQContextResultsRequiresCallback(t *testing.T) {
-	qc := NewQuery("SELECT * FROM Win32_Process").Context(nil, nil)
-	require.Error(t, qc.Results(context.Background(), nil), "Results() expected an error when callback is nil")
 }
 
 func TestQContextNextObjectDoesNotRetryNoWait(t *testing.T) {

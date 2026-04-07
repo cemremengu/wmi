@@ -145,22 +145,18 @@ High-level API:
 - `(*Client).CollectDecoded(ctx, wql, dest)` executes and decodes all rows into `dest`.
 - `(*Client).Each(ctx, wql)` returns an iterator for streaming rows.
 
-Low-level/advanced API:
+Per-query options via `(*Client).Query()`:
 
-- `(*QContext).Run(ctx, fn)` executes a callback with a live query context and always releases the remote query handle on return.
-- `(*QContext).Results(ctx, fn, options...)` streams each row into `fn` until end-of-results (`WBEM_S_FALSE`).
-- `(*QContext).Collect(ctx, options...)` executes and returns all rows for advanced/custom query contexts.
-- `(*QContext).Each(ctx)` returns an iterator for streaming rows from an advanced/custom query context.
-- `(*QContext).SetResultOptions(...)` configures default property shaping for `Results`, `Collect`, and `Each`.
+- `(*QContext).Each(ctx)` returns an iterator for streaming rows one at a time.
+- `(*QContext).Collect(ctx, options...)` executes and returns all rows.
+- `(*QContext).SetResultOptions(...)` configures property shaping for results.
 - `(*QContext).SetFlags(...)` overrides query flags.
 - `(*QContext).SetTimeout(...)` sets the default per-row fetch timeout (milliseconds, passed to the WMI protocol).
 - `(*QContext).SetSkipOptimize(true)` disables SmartEnum optimization.
-- `(*QContext).IsOptimized()` reports whether SmartEnum optimization is active.
 
-### Advanced querying
+### Per-query options
 
-For streaming large result sets, custom per-query options, or explicit lifecycle
-control, drop down to the `QContext` API via `client.Query()`:
+Use `client.Query()` to set per-query options before iterating:
 
 ```go
 qc := client.Query("SELECT Name, ProcessId FROM Win32_Process").
@@ -168,23 +164,13 @@ qc := client.Query("SELECT Name, ProcessId FROM Win32_Process").
     SetSkipOptimize(true).
     SetResultOptions(wmi.ResultOptions{IgnoreDefaults: true})
 
-err := qc.Run(ctx, func(q *wmi.QContext) error {
-    fmt.Println("optimized:", q.IsOptimized())
-
-    return q.Results(ctx, func(props map[string]*wmi.Property) error {
-        fmt.Printf("pid=%v name=%v\n", props["ProcessId"].Value, props["Name"].Value)
-        return nil
-    })
-})
-if err != nil {
-    log.Fatal(err)
+for props, err := range qc.Each(ctx) {
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("pid=%v name=%v\n", props["ProcessId"].Value, props["Name"].Value)
 }
 ```
-
-`Run` opens the remote query handle, calls your function, and always releases
-the handle on return — even if the callback returns an error. `Results` streams
-rows one at a time into the callback, so memory usage stays constant regardless
-of result set size.
 
 ## Struct decoding
 

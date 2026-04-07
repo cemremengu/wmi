@@ -56,19 +56,16 @@ func TestE2EQueryWin32OperatingSystem(t *testing.T) {
 
 	var count int
 	query := NewQuery("SELECT Caption, Version FROM Win32_OperatingSystem")
-	err := query.Context(conn, service).Run(ctx, func(qc *QContext) error {
-		return qc.Results(ctx, func(props map[string]*Property) error {
-			count++
-			caption, ok := props["Caption"]
-			if !ok {
-				assert.Fail(t, "Caption property missing from Win32_OperatingSystem")
-				return nil
-			}
-			assert.NotEmpty(t, caption.Value, "Caption is empty")
-			return nil
-		})
-	})
-	require.NoError(t, err, "query Win32_OperatingSystem")
+	for props, err := range query.Context(conn, service).Each(ctx) {
+		require.NoError(t, err, "query Win32_OperatingSystem")
+		count++
+		caption, ok := props["Caption"]
+		if !ok {
+			assert.Fail(t, "Caption property missing from Win32_OperatingSystem")
+			continue
+		}
+		assert.NotEmpty(t, caption.Value, "Caption is empty")
+	}
 	require.Greater(t, count, 0, "expected at least one Win32_OperatingSystem result")
 }
 
@@ -80,13 +77,10 @@ func TestE2EQueryWin32Process(t *testing.T) {
 
 	var count int
 	query := NewQuery("SELECT Name, ProcessId FROM Win32_Process")
-	err := query.Context(conn, service).Run(ctx, func(qc *QContext) error {
-		return qc.Results(ctx, func(props map[string]*Property) error {
-			count++
-			return nil
-		})
-	})
-	require.NoError(t, err, "query Win32_Process")
+	for _, err := range query.Context(conn, service).Each(ctx) {
+		require.NoError(t, err, "query Win32_Process")
+		count++
+	}
 	require.Greater(t, count, 0, "expected at least one Win32_Process result")
 }
 
@@ -97,13 +91,12 @@ func TestE2EInvalidQuery(t *testing.T) {
 	defer cancel()
 
 	query := NewQuery("SELECT * FROM FakeNonExistentClass")
-	err := query.Context(conn, service).Run(ctx, func(qc *QContext) error {
-		return qc.Results(ctx, func(props map[string]*Property) error {
-			assert.Fail(t, "unexpected result from invalid query")
-			return nil
-		})
-	})
-	require.Error(t, err, "expected an error for invalid WMI class query")
+	var gotErr error
+	for _, err := range query.Context(conn, service).Each(ctx) {
+		gotErr = err
+		break
+	}
+	require.Error(t, gotErr, "expected an error for invalid WMI class query")
 }
 
 // --- DialNTLM convenience API tests ---

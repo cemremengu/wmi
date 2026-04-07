@@ -78,8 +78,8 @@ func (q Query) Context(conn *Connection, service *Service) *QContext {
 	}
 }
 
-// SetResultOptions configures the default property shaping for rows returned by
-// this query context.
+// SetResultOptions configures the default property shaping for rows returned
+// by Collect and Each.
 func (q *QContext) SetResultOptions(options ResultOptions) *QContext {
 	q.resultOptions = options
 	return q
@@ -103,13 +103,8 @@ func (q *QContext) SetFlags(flags uint32) *QContext {
 	return q
 }
 
-// IsOptimized reports whether the query is using smart enumeration.
-func (q *QContext) IsOptimized() bool {
-	return q.smart
-}
-
-// Run starts the query, calls fn, and closes the query on return.
-func (q *QContext) Run(ctx context.Context, fn func(*QContext) error) (err error) {
+// run starts the query, calls fn, and closes the query on return.
+func (q *QContext) run(ctx context.Context, fn func(*QContext) error) (err error) {
 	if fn == nil {
 		return errors.New("query context callback is nil")
 	}
@@ -128,8 +123,8 @@ func (q *QContext) Run(ctx context.Context, fn func(*QContext) error) (err error
 	return fn(q)
 }
 
-// Results iterates over all result rows, calling yield for each one.
-func (q *QContext) Results(
+// results iterates over all result rows, calling yield for each one.
+func (q *QContext) results(
 	ctx context.Context,
 	yield func(map[string]*Property) error,
 	options ...ResultOptions,
@@ -381,8 +376,8 @@ func (q *QContext) close(ctx context.Context) error {
 // Collect executes the query and returns all result rows in a slice.
 func (q *QContext) Collect(ctx context.Context, options ...ResultOptions) ([]map[string]*Property, error) {
 	var rows []map[string]*Property
-	err := q.Run(ctx, func(q *QContext) error {
-		return q.Results(ctx, func(props map[string]*Property) error {
+	err := q.run(ctx, func(q *QContext) error {
+		return q.results(ctx, func(props map[string]*Property) error {
 			rows = append(rows, props)
 			return nil
 		}, options...)
@@ -403,17 +398,26 @@ func (q *QContext) Each(ctx context.Context) iter.Seq2[map[string]*Property, err
 			yield(nil, err)
 			return
 		}
-		defer q.close(ctx)
+		callerStopped := false
+		defer func() {
+			closeErr := q.close(ctx)
+			if closeErr != nil && !callerStopped {
+				yield(nil, closeErr)
+			}
+		}()
 		for {
 			props, err := q.next(ctx)
 			if err != nil {
 				if errors.Is(err, &Error{Code: wbemSFalse}) {
 					return
 				}
-				yield(nil, err)
+				if !yield(nil, err) {
+					callerStopped = true
+				}
 				return
 			}
 			if !yield(props, nil) {
+				callerStopped = true
 				return
 			}
 		}

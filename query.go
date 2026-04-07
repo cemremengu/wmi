@@ -143,7 +143,7 @@ func (q *QContext) Results(
 	for {
 		props, err := q.next(ctx)
 		if err != nil {
-			if isErrorCode(err, wbemSFalse) {
+			if errors.Is(err, &Error{Code: wbemSFalse}) {
 				return nil
 			}
 			return err
@@ -309,7 +309,7 @@ func (q *QContext) nextObject(
 		if err == nil {
 			return obj, nil
 		}
-		if !isErrorCode(err, wbemSTimedOut) || timeout == WBEMNoWait {
+		if !errors.Is(err, &Error{Code: wbemSTimedOut}) || timeout == WBEMNoWait {
 			return nil, err
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -407,7 +407,7 @@ func (q *QContext) Each(ctx context.Context) iter.Seq2[map[string]*Property, err
 		for {
 			props, err := q.next(ctx)
 			if err != nil {
-				if isErrorCode(err, wbemSFalse) {
+				if errors.Is(err, &Error{Code: wbemSFalse}) {
 					return
 				}
 				yield(nil, err)

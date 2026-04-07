@@ -114,7 +114,7 @@ func (p *Property) GetArrayReferences(
 		}
 		props, err := p.getReference(ctx, conn, service, value, filterProps)
 		if err != nil {
-			if missingAsNil && isErrorCode(err, wbemSFalse) {
+			if missingAsNil && errors.Is(err, &Error{Code: wbemSFalse}) {
 				refs = append(refs, nil)
 				continue
 			}

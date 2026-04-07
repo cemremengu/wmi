@@ -68,7 +68,7 @@ func TestQContextNextObjectDoesNotRetryNoWait(t *testing.T) {
 			return nil, wbemError(wbemSTimedOut)
 		},
 	)
-	require.True(t, isErrorCode(err, wbemSTimedOut), "nextObject() error = %v, want WBEM_S_TIMEDOUT", err)
+	require.ErrorIs(t, err, &Error{Code: wbemSTimedOut})
 	require.Equal(t, 1, calls)
 }
 

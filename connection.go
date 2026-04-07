@@ -550,7 +550,7 @@ func (c *Connection) resetBase() {
 }
 
 func shouldRetryNTLMActivation(err error) bool {
-	return isErrorCode(err, rpcSecPkgError)
+	return errors.Is(err, &Error{Code: rpcSecPkgError})
 }
 
 func signOrSealRequest(req *rpcRequest, proto *protocol, ctxID uint16) ([]byte, error) {

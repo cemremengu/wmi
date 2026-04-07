@@ -22,6 +22,18 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s (0x%08x)", e.Op, e.Msg, e.Code)
 }
 
+// Is reports whether target matches this error by code.
+func (e *Error) Is(target error) bool {
+	if e == nil {
+		return false
+	}
+	t, ok := target.(*Error)
+	if !ok {
+		return false
+	}
+	return e.Code != 0 && e.Code == t.Code
+}
+
 func codedError(code uint32, lookup map[uint32]string, fallback string) error {
 	msg := lookup[code]
 	if msg == "" {
@@ -59,10 +71,9 @@ func bindNakError(reason uint16, status uint32) error {
 	}
 	statusMsg := rpcBindNakStatusMessages[status]
 	if statusMsg == "" {
-		statusErr := rpcError(status)
-		var re *Error
-		if errors.As(statusErr, &re) {
-			statusMsg = re.Msg
+		var rpcErr *Error
+		if errors.As(rpcError(status), &rpcErr) {
+			statusMsg = rpcErr.Msg
 		}
 	}
 	if statusMsg != "" {
@@ -77,11 +88,6 @@ func bindNakError(reason uint16, status uint32) error {
 		Op:   "RPC bind rejected",
 		Msg:  reasonText,
 	}
-}
-
-func isErrorCode(err error, code uint32) bool {
-	var coded *Error
-	return errors.As(err, &coded) && coded.Code == code
 }
 
 // Sentinel errors.

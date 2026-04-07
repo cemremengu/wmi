@@ -435,6 +435,17 @@ func (q *QContext) Collect(ctx context.Context) ([]map[string]*Property, error) 
 	return rows, err
 }
 
+// CollectDecoded executes the query and decodes all result rows into dest,
+// which must be a non-nil pointer to a slice of structs (or pointers to
+// structs).
+func (q *QContext) CollectDecoded(ctx context.Context, dest any) error {
+	rows, err := q.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	return DecodeAll(rows, dest)
+}
+
 // Each returns an iterator over the query result rows. The query is started
 // lazily on the first call to the iterator and closed when iteration ends.
 //

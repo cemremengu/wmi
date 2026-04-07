@@ -119,21 +119,30 @@ start using the package from multiple goroutines.
 
 ## Querying
 
-High-level API:
+The query API exposes four entry points:
 
-- `(*Client).Query(wql, opts...)` creates a query context bound to the client.
-- `(*Client).Collect(ctx, wql, opts...)` executes and returns all rows.
-- `(*Client).CollectDecoded(ctx, wql, dest, opts...)` executes and decodes all rows into `dest`.
+- `(*Client).Query(wql, opts...)` creates a reusable query context bound to the client.
+- `(*Client).Collect(ctx, wql, opts...)` executes a query and returns all rows.
+- `(*Client).CollectDecoded(ctx, wql, dest, opts...)` executes a query and decodes all rows into `dest`.
 - `(*Client).Each(ctx, wql, opts...)` returns an iterator for streaming rows.
 
-Per-query execution via `(*Client).Query()`:
+`(*Client).Query(wql, opts...)` acts as a query builder and returns a `QContext` that can be reused for multiple executions. The returned `QContext` has the same `Collect`, `CollectDecoded`, and `Each` methods, but without the WQL and options parameters since they are already set.
 
-- `(*QContext).Each(ctx)` returns an iterator for streaming rows one at a time.
-- `(*QContext).Collect(ctx)` executes and returns all rows.
+### Query options
 
-### Per-query options
+Query options can be passed to `(*Client).Query`, `(*Client).Collect`,
+`(*Client).CollectDecoded`, and `(*Client).Each`.
 
-Pass query options at construction time:
+Available query options:
+
+- `wmi.WithNamespace(...)` overrides the default `root/cimv2` namespace.
+- `wmi.WithLanguage(...)` overrides the query language. The default is `WQL`.
+- `wmi.WithFlags(...)` overrides query flags.
+- `wmi.WithTimeout(...)` sets the default per-row fetch timeout in milliseconds.
+- `wmi.WithSkipOptimize(true)` disables SmartEnum optimization.
+- `wmi.WithResultOptions(...)` configures property shaping for results.
+
+Example with a reusable query context:
 
 ```go
 qc := client.Query(
@@ -149,6 +158,33 @@ for props, err := range qc.Each(ctx) {
         log.Fatal(err)
     }
     fmt.Printf("pid=%v name=%v\n", props["ProcessId"].Value, props["Name"].Value)
+}
+```
+
+The same `QContext` can also decode directly into a slice destination:
+
+```go
+var processes []struct {
+    Name      string `wmi:"Name"`
+    ProcessID uint32 `wmi:"ProcessId"`
+}
+
+if err := qc.CollectDecoded(ctx, &processes); err != nil {
+    log.Fatal(err)
+}
+```
+
+The same options can be passed directly to other query helpers:
+
+```go
+rows, err := client.Collect(
+    ctx,
+    "SELECT Name FROM Win32_Service",
+    wmi.WithNamespace("root/cimv2"),
+    wmi.WithTimeout(120),
+)
+if err != nil {
+    log.Fatal(err)
 }
 ```
 
@@ -198,15 +234,6 @@ for props, err := range client.Each(ctx, "SELECT Caption, Version FROM Win32_Ope
 When a row fetch receives `WBEM_S_TIMEDOUT`, the library retries automatically until
 an object arrives or `ctx` is canceled. `WBEMNoWait` remains non-blocking and
 still returns `WBEM_S_TIMEDOUT` immediately when no object is ready.
-
-Available query options:
-
-- `wmi.WithNamespace(...)` overrides the default `root/cimv2` namespace.
-- `wmi.WithLanguage(...)` overrides the query language. The default is `WQL`.
-- `wmi.WithFlags(...)` overrides query flags.
-- `wmi.WithTimeout(...)` sets the default per-row fetch timeout (milliseconds, passed to the WMI protocol).
-- `wmi.WithSkipOptimize(true)` disables SmartEnum optimization.
-- `wmi.WithResultOptions(...)` configures property shaping for results.
 
 ## Query flags
 

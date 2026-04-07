@@ -75,7 +75,7 @@ Key Distribution Center is on a separate machine.
 ```go
 client, err := wmi.DialKerberos(ctx, "host.example.com", username, password, "EXAMPLE.COM",
     wmi.WithKDC("kdc.example.com", 88),           // optional: override KDC
-    wmi.WithKerberosCache(myCache),                // optional: custom ticket cache
+    wmi.WithKerberosCache(myCache),               // optional: custom ticket cache
 )
 if err != nil {
     log.Fatal(err)
@@ -116,35 +116,32 @@ you do not call `wmi.SetDebug`, `wmi.EnableDebug`, or `wmi.DisableDebug`.
 Debug configuration is intended to be set during process startup, before you
 start using the package from multiple goroutines.
 
-## Query options
+## Querying
 
 High-level API:
 
-- `(*Client).Query(wql)` creates a query context bound to the client.
-- `(*Client).Collect(ctx, wql)` executes and returns all rows.
-- `(*Client).CollectDecoded(ctx, wql, dest)` executes and decodes all rows into `dest`.
-- `(*Client).Each(ctx, wql)` returns an iterator for streaming rows.
+- `(*Client).Query(wql, opts...)` creates a query context bound to the client.
+- `(*Client).Collect(ctx, wql, opts...)` executes and returns all rows.
+- `(*Client).CollectDecoded(ctx, wql, dest, opts...)` executes and decodes all rows into `dest`.
+- `(*Client).Each(ctx, wql, opts...)` returns an iterator for streaming rows.
 
-Per-query options via `(*Client).Query()`:
+Per-query execution via `(*Client).Query()`:
 
 - `(*QContext).Each(ctx)` returns an iterator for streaming rows one at a time.
-- `(*QContext).Collect(ctx, options...)` executes and returns all rows.
-- `(*QContext).SetNamespace(...)` overrides the default `root/cimv2` namespace.
-- `(*QContext).SetResultOptions(...)` configures property shaping for results.
-- `(*QContext).SetFlags(...)` overrides query flags.
-- `(*QContext).SetTimeout(...)` sets the default per-row fetch timeout (milliseconds, passed to the WMI protocol).
-- `(*QContext).SetSkipOptimize(true)` disables SmartEnum optimization.
+- `(*QContext).Collect(ctx)` executes and returns all rows.
 
 ### Per-query options
 
-Use `client.Query()` to set per-query options before iterating:
+Pass query options at construction time:
 
 ```go
-qc := client.Query("SELECT Name, ProcessId FROM Win32_Process").
-    SetNamespace("root/cimv2").
-    SetTimeout(120).
-    SetSkipOptimize(true).
-    SetResultOptions(wmi.ResultOptions{IgnoreDefaults: true})
+qc := client.Query(
+    "SELECT Name, ProcessId FROM Win32_Process",
+    wmi.WithNamespace("root/cimv2"),
+    wmi.WithTimeout(120),
+    wmi.WithSkipOptimize(true),
+    wmi.WithResultOptions(wmi.ResultOptions{IgnoreDefaults: true}),
+)
 
 for props, err := range qc.Each(ctx) {
     if err != nil {
@@ -157,8 +154,10 @@ for props, err := range qc.Each(ctx) {
 Querying a non-default namespace works the same way:
 
 ```go
-events := client.Query("SELECT * FROM __EventFilter").
-    SetNamespace("root/subscription")
+events := client.Query(
+    "SELECT * FROM __EventFilter",
+    wmi.WithNamespace("root/subscription"),
+)
 
 rows, err := events.Collect(ctx)
 if err != nil {
@@ -198,6 +197,15 @@ for props, err := range client.Each(ctx, "SELECT Caption, Version FROM Win32_Ope
 When a row fetch receives `WBEM_S_TIMEDOUT`, the library retries automatically until
 an object arrives or `ctx` is canceled. `WBEMNoWait` remains non-blocking and
 still returns `WBEM_S_TIMEDOUT` immediately when no object is ready.
+
+Available query options:
+
+- `wmi.WithNamespace(...)` overrides the default `root/cimv2` namespace.
+- `wmi.WithLanguage(...)` overrides the query language. The default is `WQL`.
+- `wmi.WithFlags(...)` overrides query flags.
+- `wmi.WithTimeout(...)` sets the default per-row fetch timeout (milliseconds, passed to the WMI protocol).
+- `wmi.WithSkipOptimize(true)` disables SmartEnum optimization.
+- `wmi.WithResultOptions(...)` configures property shaping for results.
 
 ## Query flags
 

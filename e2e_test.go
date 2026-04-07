@@ -99,8 +99,6 @@ func TestE2EInvalidQuery(t *testing.T) {
 	require.Error(t, gotErr, "expected an error for invalid WMI class query")
 }
 
-// --- DialNTLM convenience API tests ---
-
 func e2eDialNTLM(t *testing.T) *Client {
 	t.Helper()
 

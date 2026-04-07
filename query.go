@@ -16,6 +16,61 @@ type Query struct {
 	Query     string
 	Namespace string
 	Language  string
+	Flags     uint32
+	Timeout   uint32
+
+	SkipOptimize  bool
+	ResultOptions ResultOptions
+
+	flagsSet   bool
+	timeoutSet bool
+}
+
+// QueryOption configures a [Query].
+type QueryOption func(*Query)
+
+// WithNamespace overrides the default WMI namespace for a query.
+func WithNamespace(namespace string) QueryOption {
+	return func(q *Query) {
+		q.Namespace = normalizeNamespace(namespace)
+	}
+}
+
+// WithLanguage overrides the query language. The default is WQL.
+func WithLanguage(language string) QueryOption {
+	return func(q *Query) {
+		q.Language = language
+	}
+}
+
+// WithFlags overrides the WBEM query flags.
+func WithFlags(flags uint32) QueryOption {
+	return func(q *Query) {
+		q.Flags = flags
+		q.flagsSet = true
+	}
+}
+
+// WithTimeout sets the default per-row fetch timeout in milliseconds.
+func WithTimeout(timeout uint32) QueryOption {
+	return func(q *Query) {
+		q.Timeout = timeout
+		q.timeoutSet = true
+	}
+}
+
+// WithSkipOptimize disables the smart-enum optimization when set to true.
+func WithSkipOptimize(skip bool) QueryOption {
+	return func(q *Query) {
+		q.SkipOptimize = skip
+	}
+}
+
+// WithResultOptions configures property shaping for query results.
+func WithResultOptions(options ResultOptions) QueryOption {
+	return func(q *Query) {
+		q.ResultOptions = options
+	}
 }
 
 // ResultOptions controls which properties are included in query results.
@@ -41,12 +96,20 @@ type QContext struct {
 }
 
 // NewQuery creates a Query with default namespace and language.
-func NewQuery(query string) Query {
-	return Query{
-		Query:     query,
-		Namespace: defaultNamespace,
-		Language:  "WQL",
+func NewQuery(query string, opts ...QueryOption) Query {
+	q := Query{
+		Query:      query,
+		Namespace:  defaultNamespace,
+		Language:   "WQL",
+		Flags:      DefaultQueryFlags(),
+		Timeout:    60,
+		flagsSet:   true,
+		timeoutSet: true,
 	}
+	for _, opt := range opts {
+		opt(&q)
+	}
+	return q
 }
 
 // DefaultResultOptions returns the default ResultOptions.
@@ -76,46 +139,22 @@ func (q Query) context(conn *connection, svc *service) *QContext {
 	if q.Language == "" {
 		q.Language = "WQL"
 	}
+	if !q.flagsSet {
+		q.Flags = DefaultQueryFlags()
+	}
+	if !q.timeoutSet {
+		q.Timeout = 60
+	}
 	return &QContext{
 		query:         q,
 		conn:          conn,
 		service:       svc,
-		flags:         DefaultQueryFlags(),
-		timeout:       60,
+		flags:         q.Flags,
+		timeout:       q.Timeout,
+		skipOptimize:  q.SkipOptimize,
 		classParts:    make(map[string]*classPart),
-		resultOptions: DefaultResultOptions(),
+		resultOptions: q.ResultOptions,
 	}
-}
-
-// SetResultOptions configures the default property shaping for rows returned
-// by Collect and Each.
-func (q *QContext) SetResultOptions(options ResultOptions) *QContext {
-	q.resultOptions = options
-	return q
-}
-
-// SetTimeout sets the per-row fetch timeout in milliseconds.
-func (q *QContext) SetTimeout(timeout uint32) *QContext {
-	q.timeout = timeout
-	return q
-}
-
-// SetSkipOptimize disables the smart-enum optimization when set to true.
-func (q *QContext) SetSkipOptimize(skip bool) *QContext {
-	q.skipOptimize = skip
-	return q
-}
-
-// SetNamespace overrides the WMI namespace for this query.
-func (q *QContext) SetNamespace(namespace string) *QContext {
-	q.query.Namespace = normalizeNamespace(namespace)
-	return q
-}
-
-// SetFlags overrides the WBEM query flags.
-func (q *QContext) SetFlags(flags uint32) *QContext {
-	q.flags = flags
-	return q
 }
 
 // run starts the query, calls fn, and closes the query on return.
@@ -142,13 +181,9 @@ func (q *QContext) run(ctx context.Context, fn func(*QContext) error) (err error
 func (q *QContext) results(
 	ctx context.Context,
 	yield func(map[string]*Property) error,
-	options ...ResultOptions,
 ) error {
 	if yield == nil {
 		return errors.New("query results callback is nil")
-	}
-	if len(options) > 0 {
-		q.resultOptions = options[0]
 	}
 	for {
 		props, err := q.next(ctx)
@@ -389,13 +424,13 @@ func (q *QContext) close(ctx context.Context) error {
 }
 
 // Collect executes the query and returns all result rows in a slice.
-func (q *QContext) Collect(ctx context.Context, options ...ResultOptions) ([]map[string]*Property, error) {
+func (q *QContext) Collect(ctx context.Context) ([]map[string]*Property, error) {
 	var rows []map[string]*Property
 	err := q.run(ctx, func(q *QContext) error {
 		return q.results(ctx, func(props map[string]*Property) error {
 			rows = append(rows, props)
 			return nil
-		}, options...)
+		})
 	})
 	return rows, err
 }

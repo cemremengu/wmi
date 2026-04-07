@@ -126,16 +126,16 @@ func (c *Client) Close() error {
 
 // Query creates a [QContext] bound to this client's connection and service.
 //
-//	qc := client.Query("SELECT Name FROM Win32_Process")
-func (c *Client) Query(wql string) *QContext {
-	return NewQuery(wql).context(c.conn, c.service)
+//	qc := client.Query("SELECT Name FROM Win32_Process", WithTimeout(120))
+func (c *Client) Query(wql string, opts ...QueryOption) *QContext {
+	return NewQuery(wql, opts...).context(c.conn, c.service)
 }
 
 // Collect executes wql and returns all result rows in a slice.
 //
-//	rows, err := client.Collect(ctx, "SELECT Name FROM Win32_Process")
-func (c *Client) Collect(ctx context.Context, wql string) ([]map[string]*Property, error) {
-	return c.Query(wql).Collect(ctx)
+//	rows, err := client.Collect(ctx, "SELECT Name FROM Win32_Process", WithTimeout(120))
+func (c *Client) Collect(ctx context.Context, wql string, opts ...QueryOption) ([]map[string]*Property, error) {
+	return c.Query(wql, opts...).Collect(ctx)
 }
 
 // CollectDecoded executes wql and decodes all result rows into dest, which
@@ -143,9 +143,9 @@ func (c *Client) Collect(ctx context.Context, wql string) ([]map[string]*Propert
 //
 //	type Proc struct{ Name string `wmi:"Name"` }
 //	var procs []Proc
-//	err := client.CollectDecoded(ctx, "SELECT Name FROM Win32_Process", &procs)
-func (c *Client) CollectDecoded(ctx context.Context, wql string, dest any) error {
-	rows, err := c.Collect(ctx, wql)
+//	err := client.CollectDecoded(ctx, "SELECT Name FROM Win32_Process", &procs, WithTimeout(120))
+func (c *Client) CollectDecoded(ctx context.Context, wql string, dest any, opts ...QueryOption) error {
+	rows, err := c.Collect(ctx, wql, opts...)
 	if err != nil {
 		return err
 	}
@@ -156,10 +156,10 @@ func (c *Client) CollectDecoded(ctx context.Context, wql string, dest any) error
 // Iteration stops on the first error; break out of the range loop
 // to release resources early.
 //
-//	for props, err := range client.Each(ctx, "SELECT * FROM Win32_Process") {
+//	for props, err := range client.Each(ctx, "SELECT * FROM Win32_Process", WithTimeout(120)) {
 //	    if err != nil { ... }
 //	    fmt.Println(props["Name"].Value)
 //	}
-func (c *Client) Each(ctx context.Context, wql string) iter.Seq2[map[string]*Property, error] {
-	return c.Query(wql).Each(ctx)
+func (c *Client) Each(ctx context.Context, wql string, opts ...QueryOption) iter.Seq2[map[string]*Property, error] {
+	return c.Query(wql, opts...).Each(ctx)
 }

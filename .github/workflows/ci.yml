@@ -62,4 +62,4 @@ jobs:
           WMI_HOST: localhost
           WMI_USER: wmitest
           WMI_PASS: "P@ssw0rd!23"
-        run: go test -race -tags e2e -v -count=1 -timeout 120s
+        run: go test -race -tags e2e_ntlm -v -count=1 -timeout 120s

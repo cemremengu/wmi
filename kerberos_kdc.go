@@ -15,6 +15,15 @@ func sendKerberosPacket(ctx context.Context, packet []byte, host string, port in
 		return nil, err
 	}
 	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	defer stop()
 
 	wire := make([]byte, 4+len(packet))
 	wireLen, err := checkedUint32(len(packet))
@@ -24,17 +33,24 @@ func sendKerberosPacket(ctx context.Context, packet []byte, host string, port in
 	binary.BigEndian.PutUint32(wire[:4], wireLen)
 	copy(wire[4:], packet)
 	if _, err := conn.Write(wire); err != nil {
-		return nil, err
+		return nil, kerberosPacketError(ctx, err)
 	}
 
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
-		return nil, err
+		return nil, kerberosPacketError(ctx, err)
 	}
 	respLen := binary.BigEndian.Uint32(header)
 	resp := make([]byte, respLen)
 	if _, err := io.ReadFull(conn, resp); err != nil {
-		return nil, err
+		return nil, kerberosPacketError(ctx, err)
 	}
 	return resp, nil
+}
+
+func kerberosPacketError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
 }

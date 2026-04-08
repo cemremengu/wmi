@@ -103,7 +103,13 @@ func main() {
 	ctx := context.Background()
 	start := time.Now()
 
-	client, err := wmi.DialNTLM(ctx, *host, *username, *password, wmi.WithDomain(*domain))
+	client, err := wmi.DialNTLM(
+		ctx,
+		*host,
+		*username,
+		*password,
+		wmi.WithDomain(*domain),
+		wmi.WithConnectTimeout(5*time.Second))
 	if err != nil {
 		log.Fatal(err)
 	}

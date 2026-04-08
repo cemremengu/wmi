@@ -3,6 +3,7 @@ package wmi
 import (
 	"context"
 	"iter"
+	"time"
 )
 
 // Client is a high-level WMI client that owns both the connection and the
@@ -17,38 +18,79 @@ type Client struct {
 }
 
 // NTLMOption configures [DialNTLM].
-type NTLMOption func(*ntlmConfig)
+type NTLMOption interface {
+	applyNTLM(*ntlmConfig)
+}
+
+// KerberosOption configures [DialKerberos].
+type KerberosOption interface {
+	applyKerberos(*kerberosConfig)
+}
+
+// DialOption configures connection setup shared by [DialNTLM] and
+// [DialKerberos].
+type DialOption interface {
+	NTLMOption
+	KerberosOption
+}
+
+type ntlmOptionFunc func(*ntlmConfig)
+
+func (f ntlmOptionFunc) applyNTLM(c *ntlmConfig) { f(c) }
+
+type kerberosOptionFunc func(*kerberosConfig)
+
+func (f kerberosOptionFunc) applyKerberos(c *kerberosConfig) { f(c) }
+
+type connectTimeoutOption time.Duration
+
+func (o connectTimeoutOption) applyNTLM(c *ntlmConfig) {
+	c.connectTimeout = time.Duration(o)
+}
+
+func (o connectTimeoutOption) applyKerberos(c *kerberosConfig) {
+	c.connectTimeout = time.Duration(o)
+}
+
+type dialConfig struct {
+	connectTimeout time.Duration
+}
 
 type ntlmConfig struct {
+	dialConfig
 	domain string
 }
 
 // WithDomain sets the domain for NTLM authentication.
 func WithDomain(domain string) NTLMOption {
-	return func(c *ntlmConfig) { c.domain = domain }
+	return ntlmOptionFunc(func(c *ntlmConfig) { c.domain = domain })
 }
 
-// KerberosOption configures [DialKerberos].
-type KerberosOption func(*kerberosConfig)
-
 type kerberosConfig struct {
+	dialConfig
 	kdcHost string
 	kdcPort int
 	cache   *KerberosCache
 }
 
+// WithConnectTimeout sets a timeout for the overall dial and authentication
+// handshake. The caller's context is still honored and can cancel earlier.
+func WithConnectTimeout(timeout time.Duration) DialOption {
+	return connectTimeoutOption(timeout)
+}
+
 // WithKDC overrides the Kerberos KDC host and port.
 // By default DialKerberos uses the target host on port 88.
 func WithKDC(host string, port int) KerberosOption {
-	return func(c *kerberosConfig) {
+	return kerberosOptionFunc(func(c *kerberosConfig) {
 		c.kdcHost = host
 		c.kdcPort = port
-	}
+	})
 }
 
 // WithKerberosCache sets a custom Kerberos ticket cache.
 func WithKerberosCache(cache *KerberosCache) KerberosOption {
-	return func(c *kerberosConfig) { c.cache = cache }
+	return kerberosOptionFunc(func(c *kerberosConfig) { c.cache = cache })
 }
 
 // DialNTLM connects to host and authenticates using NTLM, returning a
@@ -59,8 +101,10 @@ func WithKerberosCache(cache *KerberosCache) KerberosOption {
 func DialNTLM(ctx context.Context, host, username, password string, opts ...NTLMOption) (*Client, error) {
 	var cfg ntlmConfig
 	for _, o := range opts {
-		o(&cfg)
+		o.applyNTLM(&cfg)
 	}
+	ctx, cancel := withConnectTimeout(ctx, cfg.connectTimeout)
+	defer cancel()
 	conn := newConnection(host, username, password)
 	conn.domain = cfg.domain
 	svc, err := conn.negotiateNTLM(ctx)
@@ -83,8 +127,10 @@ func DialKerberos(
 ) (*Client, error) {
 	var cfg kerberosConfig
 	for _, o := range opts {
-		o(&cfg)
+		o.applyKerberos(&cfg)
 	}
+	ctx, cancel := withConnectTimeout(ctx, cfg.connectTimeout)
+	defer cancel()
 	conn := newConnection(host, username, password)
 	conn.domain = domain
 	if cfg.kdcHost != "" {
@@ -100,6 +146,13 @@ func DialKerberos(
 		return nil, err
 	}
 	return &Client{conn: conn, service: svc}, nil
+}
+
+func withConnectTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // Close releases the service binding and the underlying connection.

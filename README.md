@@ -193,7 +193,7 @@ which is the recommended setting for most queries. Additional flags from
 
 ## Property types
 
-Rows returned by `Client.Collect`, `Client.Each`, `QContext.Collect`, and `QContext.Each` use
+Rows returned by `Collect` and `Each` methods use 
 `map[string]*Property`. The `Property` struct exposes:
 
 | Field / Method        | Description                                          |

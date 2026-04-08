@@ -53,128 +53,97 @@ jobs:
         run: go test -race -tags e2e -v -count=1 -timeout 120s ./...
 
   test-kerberos:
-    name: Test Kerberos
-    runs-on: windows-2022
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Install MIT Kerberos for Windows
-        shell: pwsh
-        run: |
-          $url = "https://web.mit.edu/kerberos/dist/kfw/4.1/kfw-4.1-amd64.msi"
-          $msi = "$env:RUNNER_TEMP\kfw.msi"
-          Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
-          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
-          $kbin = "C:\Program Files\MIT\Kerberos\bin"
-          if (-not (Test-Path $kbin)) { throw "MIT Kerberos install failed" }
-          Add-Content -Path $env:GITHUB_PATH -Value $kbin
-
-      - name: Configure standalone KDC
-        shell: pwsh
-        run: |
-          $realm   = "WMI.TEST"
-          $kdcHost = "localhost"
-          $cfgDir  = "C:\ProgramData\MIT\Kerberos5"
-          $varDir  = "$cfgDir\var\krb5kdc"
-          New-Item -ItemType Directory -Force -Path $varDir | Out-Null
-
-          @"
-          [libdefaults]
-            default_realm = $realm
-            dns_lookup_kdc = false
-            dns_lookup_realm = false
-            udp_preference_limit = 1
-
-          [realms]
-            $realm = {
-              kdc = ${kdcHost}:88
-              admin_server = ${kdcHost}:749
-              database_name = $varDir\principal
-              key_stash_file = $varDir\.k5.$realm
-              acl_file = $varDir\kadm5.acl
+      name: Test Kerberos
+      runs-on: windows-2022
+      timeout-minutes: 15
+      env:
+        KRB5_REALM: WMI.TEST
+        KRB5_USER: wmitest
+        KRB5_PASS: "P@ssw0rd!23"
+        KRB5_KDC_HOST: 127.0.0.1
+      steps:
+        - uses: actions/checkout@v6
+        - uses: actions/setup-go@v6
+          with:
+            go-version-file: go.mod
+  
+        - name: Switch Docker to Linux containers
+          shell: pwsh
+          run: |
+            & "$Env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+            # Wait for the engine to come back
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              try { docker version --format '{{.Server.Os}}' 2>$null | Out-Null; $ok = $true; break } catch {}
+              Start-Sleep -Seconds 2
             }
-
-          [domain_realm]
-            .wmi.test = $realm
-            wmi.test  = $realm
-          "@ | Set-Content -Path "$cfgDir\krb5.ini" -Encoding ASCII
-
-          @"
-          [kdcdefaults]
-            kdc_ports = 88
-
-          [realms]
-            $realm = {
-              database_name = $varDir\principal
-              key_stash_file = $varDir\.k5.$realm
-              acl_file = $varDir\kadm5.acl
-              max_life = 12h 0m 0s
-              max_renewable_life = 7d 0h 0m 0s
+            if (-not $ok) { throw "Docker did not switch to Linux engine" }
+            docker version
+  
+        - name: Start MIT KDC container
+          shell: pwsh
+          run: |
+            docker run -d --name kdc `
+              -p 88:88/tcp -p 88:88/udp `
+              -e KRB5_REALM=$env:KRB5_REALM `
+              -e KRB5_PASS=$env:KRB5_PASS `
+              -e KRB5_KDC=kdc.wmi.test `
+              gcavalcante8808/krb5-server
+  
+            # Wait for port 88 (TCP) to answer
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              if (Test-NetConnection -ComputerName 127.0.0.1 -Port 88 -InformationLevel Quiet) { $ok = $true; break }
+              Start-Sleep -Seconds 1
             }
-          "@ | Set-Content -Path "$varDir\kdc.conf" -Encoding ASCII
-
-          "*/admin@$realm  *" | Set-Content -Path "$varDir\kadm5.acl" -Encoding ASCII
-
-          $env:KRB5_CONFIG     = "$cfgDir\krb5.ini"
-          $env:KRB5_KDC_PROFILE = "$varDir\kdc.conf"
-
-      - name: Initialize KDC database and principals
-        shell: pwsh
-        run: |
-          $env:KRB5_CONFIG     = "C:\ProgramData\MIT\Kerberos5\krb5.ini"
-          $env:KRB5_KDC_PROFILE = "C:\ProgramData\MIT\Kerberos5\var\krb5kdc\kdc.conf"
-
-          # Create the KDC database with a stash file (-s) so krb5kdc starts unattended
-          kdb5_util.exe create -s -P "stash-master-pw" -r WMI.TEST
-          if ($LASTEXITCODE -ne 0) { throw "kdb5_util create failed" }
-
-          kadmin.local.exe -q "addprinc -pw P@ssw0rd!23 wmitest@WMI.TEST"
-          kadmin.local.exe -q "addprinc -randkey HOST/localhost@WMI.TEST"
-          kadmin.local.exe -q "ktadd -k C:\ProgramData\MIT\Kerberos5\host.keytab HOST/localhost@WMI.TEST"
-
-      - name: Start KDC
-        shell: pwsh
-        run: |
-          $env:KRB5_CONFIG     = "C:\ProgramData\MIT\Kerberos5\krb5.ini"
-          $env:KRB5_KDC_PROFILE = "C:\ProgramData\MIT\Kerberos5\var\krb5kdc\kdc.conf"
-
-          # Run krb5kdc in the background; -n would block, so omit it
-          Start-Process -FilePath "krb5kdc.exe" -WindowStyle Hidden
-
-          # Wait for port 88 to accept connections
-          $ok = $false
-          for ($i = 0; $i -lt 20; $i++) {
-            if (Test-NetConnection -ComputerName localhost -Port 88 -InformationLevel Quiet) {
-              $ok = $true; break
+            if (-not $ok) {
+              docker logs kdc
+              throw "KDC did not become reachable on 127.0.0.1:88"
             }
-            Start-Sleep -Seconds 1
-          }
-          if (-not $ok) { throw "KDC did not come up on port 88" }
-
-      - name: Smoke-test ticket acquisition
-        shell: pwsh
-        run: |
-          "P@ssw0rd!23" | kinit.exe wmitest@WMI.TEST
-          if ($LASTEXITCODE -ne 0) { throw "kinit failed" }
-          klist.exe
-
-      - name: Export Kerberos env for tests
-        shell: pwsh
-        run: |
-          @(
-            "KRB5_CONFIG=C:\ProgramData\MIT\Kerberos5\krb5.ini",
-            "WMI_REALM=WMI.TEST",
-            "WMI_USER=wmitest",
-            "WMI_PASS=P@ssw0rd!23",
-            "WMI_KDC_HOST=localhost",
-            "WMI_KDC_PORT=88",
-            "WMI_KEYTAB=C:\ProgramData\MIT\Kerberos5\host.keytab"
-          ) | Add-Content -Path $env:GITHUB_ENV
-
-      - name: Run tests
-        shell: pwsh
-        run: go test -race -tags e2e -v -count=1 -timeout 120s ./...
+  
+        - name: Add test principal
+          shell: pwsh
+          run: |
+            docker exec kdc kadmin.local -q "addprinc -pw $env:KRB5_PASS $env:KRB5_USER@$env:KRB5_REALM"
+            docker exec kdc kadmin.local -q "addprinc -randkey HOST/kdc.wmi.test@$env:KRB5_REALM"
+            docker exec kdc kadmin.local -q "ktadd -k /tmp/host.keytab HOST/kdc.wmi.test@$env:KRB5_REALM"
+            docker cp kdc:/tmp/host.keytab "$env:RUNNER_TEMP\host.keytab"
+  
+        - name: Write krb5.conf for test client
+          shell: pwsh
+          run: |
+            $cfg = @"
+            [libdefaults]
+              default_realm = $env:KRB5_REALM
+              dns_lookup_kdc = false
+              dns_lookup_realm = false
+              udp_preference_limit = 1
+  
+            [realms]
+              $($env:KRB5_REALM) = {
+                kdc = 127.0.0.1:88
+                admin_server = 127.0.0.1:749
+              }
+  
+            [domain_realm]
+              .wmi.test = $env:KRB5_REALM
+              wmi.test  = $env:KRB5_REALM
+            "@
+            $path = "$env:RUNNER_TEMP\krb5.conf"
+            Set-Content -Path $path -Value $cfg -Encoding ASCII
+            Add-Content -Path $env:GITHUB_ENV -Value "KRB5_CONFIG=$path"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_REALM=$env:KRB5_REALM"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_USER=$env:KRB5_USER"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_PASS=$env:KRB5_PASS"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_HOST=127.0.0.1"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_PORT=88"
+            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KEYTAB=$env:RUNNER_TEMP\host.keytab"
+  
+        - name: Run tests
+          shell: pwsh
+          run: go test -race -tags e2e -v -count=1 -timeout 120s ./...
+  
+        - name: KDC logs on failure
+          if: failure()
+          shell: pwsh
+          run: docker logs kdc

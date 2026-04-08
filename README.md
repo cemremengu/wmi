@@ -41,6 +41,7 @@ import (
 	"github.com/cemremengu/wmi"
 )
 
+// struct tags are optional; defaults to the field name
 type OperatingSystem struct {
 	Caption string // `wmi:"Caption"`
 	Version string // `wmi:"Version"`
@@ -91,34 +92,6 @@ Kerberos tickets (TGT + TGS) are cached inside each connection for its
 lifetime, so multiple queries reuse them automatically. Use
 `WithKerberosCache` with a file-backed cache (`NewKerberosCache(path)`)
 to persist tickets to disk across process restarts.
-
-## Debug logging
-
-The package exposes opt-in debug logging for the DCOM/RPC authentication and
-request path. Logging is disabled by default.
-
-Enable the built-in logger:
-
-```go
-wmi.EnableDebug()
-```
-
-Or attach your own `slog` logger:
-
-```go
-logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-	Level: slog.LevelDebug,
-}))
-
-wmi.SetLogger(logger.With("component", "wmi"))
-wmi.EnableDebug()
-```
-
-You can also enable debugging with the `WMI_DEBUG=1` environment variable if
-you do not call `wmi.SetDebug`, `wmi.EnableDebug`, or `wmi.DisableDebug`.
-
-Debug configuration is intended to be set during process startup, before you
-start using the package from multiple goroutines.
 
 ## Querying
 
@@ -205,39 +178,6 @@ if err != nil {
 }
 ```
 
-## Struct decoding
-
-Use `CollectDecoded` for struct slices, or `Decode` with `Each` for per-row decoding:
-
-```go
-type OperatingSystem struct {
-	Caption string `wmi:"Caption"`
-	Version string `wmi:"Version"`
-}
-
-var systems []OperatingSystem
-if err := client.CollectDecoded(ctx, "SELECT Caption, Version FROM Win32_OperatingSystem", &systems); err != nil {
-	log.Fatal(err)
-}
-
-for props, err := range client.Each(ctx, "SELECT Caption, Version FROM Win32_OperatingSystem") {
-	if err != nil {
-		log.Fatal(err)
-	}
-	var os OperatingSystem
-	if err := wmi.Decode(props, &os); err != nil {
-		log.Fatal(err)
-	}
-}
-```
-
-`DefaultResultOptions()` defaults to:
-`IgnoreDefaults=false`, `IgnoreMissing=false`, `LoadQualifiers=false`.
-
-When a row fetch receives `WBEM_S_TIMEDOUT`, the library retries automatically until
-an object arrives or `ctx` is canceled. `WBEMNoWait` remains non-blocking and
-still returns `WBEM_S_TIMEDOUT` immediately when no object is ready.
-
 ## Query flags
 
 `DefaultQueryFlags()` returns `WBEMFlagReturnImmediately | WBEMFlagForwardOnly`,
@@ -292,6 +232,34 @@ Sentinel errors:
 | `wmi.ErrServerNotOptimized`| Server does not support SmartEnum; library falls back to standard enumeration |
 | `wmi.ErrLegacyEncoding`    | Legacy object encoding encountered (unsupported)|
 | `wmi.ErrNotImplemented`    | Feature not yet implemented                     |
+
+## Debug logging
+
+The package exposes opt-in debug logging for the DCOM/RPC authentication and
+request path. Logging is disabled by default.
+
+Enable the built-in logger:
+
+```go
+wmi.EnableDebug()
+```
+
+Or attach your own `slog` logger:
+
+```go
+logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelDebug,
+}))
+
+wmi.SetLogger(logger.With("component", "wmi"))
+wmi.EnableDebug()
+```
+
+You can also enable debugging with the `WMI_DEBUG=1` environment variable if
+you do not call `wmi.SetDebug`, `wmi.EnableDebug`, or `wmi.DisableDebug`.
+
+Debug configuration is intended to be set during process startup, before you
+start using the package from multiple goroutines.
 
 ## Disclaimer
 

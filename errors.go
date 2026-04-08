@@ -92,7 +92,8 @@ func bindNakError(reason uint16, status uint32) error {
 
 // Sentinel errors.
 var (
-	ErrServerNotOptimized = &Error{Msg: "server does not support smart enumeration"}
-	ErrLegacyEncoding     = &Error{Msg: "legacy object encoding is not supported"}
-	ErrNotImplemented     = &Error{Msg: "not implemented"}
+	ErrServerNotOptimized     = &Error{Msg: "server does not support smart enumeration"}
+	ErrLegacyEncoding         = &Error{Msg: "legacy object encoding is not supported"}
+	ErrNotImplemented         = &Error{Msg: "not implemented"}
+	ErrKerberosPacketTooLarge = errors.New("kerberos KDC response too large")
 )

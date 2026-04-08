@@ -3,9 +3,11 @@ package wmi
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 func sendKerberosPacket(ctx context.Context, packet []byte, host string, port int) ([]byte, error) {
@@ -50,7 +52,12 @@ func sendKerberosPacket(ctx context.Context, packet []byte, host string, port in
 
 func kerberosPacketError(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
+		return fmt.Errorf("%w: %w", ctxErr, err)
+	}
+	var netErr net.Error
+	if deadline, ok := ctx.Deadline(); ok && errors.As(err, &netErr) && netErr.Timeout() &&
+		!time.Now().Before(deadline) {
+		return fmt.Errorf("%w: %w", context.DeadlineExceeded, err)
 	}
 	return err
 }

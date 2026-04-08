@@ -54,96 +54,73 @@ jobs:
 
   test-kerberos:
       name: Test Kerberos
-      runs-on: windows-2022
-      timeout-minutes: 15
-      env:
-        KRB5_REALM: WMI.TEST
-        KRB5_USER: wmitest
-        KRB5_PASS: "P@ssw0rd!23"
-        KRB5_KDC_HOST: 127.0.0.1
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      services:
+        kdc:
+          image: gcavalcante8808/krb5-server
+          ports:
+            - 88:88
+            - 88:88/udp
+            - 464:464
+            - 749:749
+          env:
+            KRB5_REALM: WMI.TEST
+            KRB5_KDC: localhost
+            KRB5_PASS: "P@ssw0rd!23"
       steps:
         - uses: actions/checkout@v6
         - uses: actions/setup-go@v6
           with:
             go-version-file: go.mod
   
-        - name: Switch Docker to Linux containers
-          shell: pwsh
+        - name: Install krb5 client tools
           run: |
-            & "$Env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
-            # Wait for the engine to come back
-            $ok = $false
-            for ($i = 0; $i -lt 30; $i++) {
-              try { docker version --format '{{.Server.Os}}' 2>$null | Out-Null; $ok = $true; break } catch {}
-              Start-Sleep -Seconds 2
-            }
-            if (-not $ok) { throw "Docker did not switch to Linux engine" }
-            docker version
+            sudo apt-get update
+            sudo apt-get install -y krb5-user
   
-        - name: Start MIT KDC container
-          shell: pwsh
+        - name: Write krb5.conf
           run: |
-            docker run -d --name kdc `
-              -p 88:88/tcp -p 88:88/udp `
-              -e KRB5_REALM=$env:KRB5_REALM `
-              -e KRB5_PASS=$env:KRB5_PASS `
-              -e KRB5_KDC=kdc.wmi.test `
-              gcavalcante8808/krb5-server
-  
-            # Wait for port 88 (TCP) to answer
-            $ok = $false
-            for ($i = 0; $i -lt 30; $i++) {
-              if (Test-NetConnection -ComputerName 127.0.0.1 -Port 88 -InformationLevel Quiet) { $ok = $true; break }
-              Start-Sleep -Seconds 1
-            }
-            if (-not $ok) {
-              docker logs kdc
-              throw "KDC did not become reachable on 127.0.0.1:88"
-            }
-  
-        - name: Add test principal
-          shell: pwsh
-          run: |
-            docker exec kdc kadmin.local -q "addprinc -pw $env:KRB5_PASS $env:KRB5_USER@$env:KRB5_REALM"
-            docker exec kdc kadmin.local -q "addprinc -randkey HOST/kdc.wmi.test@$env:KRB5_REALM"
-            docker exec kdc kadmin.local -q "ktadd -k /tmp/host.keytab HOST/kdc.wmi.test@$env:KRB5_REALM"
-            docker cp kdc:/tmp/host.keytab "$env:RUNNER_TEMP\host.keytab"
-  
-        - name: Write krb5.conf for test client
-          shell: pwsh
-          run: |
-            $cfg = @"
+            sudo tee /etc/krb5.conf > /dev/null <<'EOF'
             [libdefaults]
-              default_realm = $env:KRB5_REALM
+              default_realm = WMI.TEST
               dns_lookup_kdc = false
               dns_lookup_realm = false
               udp_preference_limit = 1
   
             [realms]
-              $($env:KRB5_REALM) = {
+              WMI.TEST = {
                 kdc = 127.0.0.1:88
                 admin_server = 127.0.0.1:749
               }
   
             [domain_realm]
-              .wmi.test = $env:KRB5_REALM
-              wmi.test  = $env:KRB5_REALM
-            "@
-            $path = "$env:RUNNER_TEMP\krb5.conf"
-            Set-Content -Path $path -Value $cfg -Encoding ASCII
-            Add-Content -Path $env:GITHUB_ENV -Value "KRB5_CONFIG=$path"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_REALM=$env:KRB5_REALM"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_USER=$env:KRB5_USER"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_PASS=$env:KRB5_PASS"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_HOST=127.0.0.1"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KDC_PORT=88"
-            Add-Content -Path $env:GITHUB_ENV -Value "WMI_KEYTAB=$env:RUNNER_TEMP\host.keytab"
+              .wmi.test = WMI.TEST
+              wmi.test  = WMI.TEST
+            EOF
+  
+        - name: Add test principal
+          run: |
+            # The container creates admin/admin@REALM with KRB5_PASS by default.
+            # Use kadmin (network) from the host against the container.
+            echo "P@ssw0rd!23" | kadmin -p admin/admin -r WMI.TEST \
+              -q "addprinc -pw P@ssw0rd!23 wmitest@WMI.TEST"
+  
+        - name: Smoke test
+          run: |
+            echo "P@ssw0rd!23" | kinit wmitest@WMI.TEST
+            klist
   
         - name: Run tests
-          shell: pwsh
+          env:
+            WMI_REALM: WMI.TEST
+            WMI_USER: wmitest
+            WMI_PASS: "P@ssw0rd!23"
+            WMI_KDC_HOST: 127.0.0.1
+            WMI_KDC_PORT: "88"
+            KRB5_CONFIG: /etc/krb5.conf
           run: go test -race -tags e2e -v -count=1 -timeout 120s ./...
   
         - name: KDC logs on failure
           if: failure()
-          shell: pwsh
-          run: docker logs kdc
+          run: docker logs "${{ job.services.kdc.id }}"

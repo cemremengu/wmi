@@ -69,25 +69,6 @@ func main() {
 }
 ```
 
-### Dial options
-
-Dial methods still take a `context.Context` for cancellation and deadline
-propagation. You can also set a connection-specific timeout for the full dial
-and authentication handshake:
-
-```go
-ctx := context.Background()
-
-client, err := wmi.DialNTLM(ctx, host, username, password,
-	wmi.WithConnectTimeout(15*time.Second),
-)
-```
-
-Available dial options:
-
-- `wmi.WithConnectTimeout(...)` sets a timeout for the full dial and authentication handshake.
-- `wmi.WithDomain(...)` sets the NTLM domain.
-
 ## Kerberos
 
 For Kerberos authentication, use a FQDN as the hostname. Domain is required.
@@ -110,12 +91,6 @@ Kerberos tickets (TGT + TGS) are cached inside each connection for its
 lifetime, so multiple queries reuse them automatically. Use
 `WithKerberosCache` with a file-backed cache (`NewKerberosCache(path)`)
 to persist tickets to disk across process restarts.
-
-Additional Kerberos dial options:
-
-- `wmi.WithConnectTimeout(...)` sets a timeout for the full dial and authentication handshake.
-- `wmi.WithKDC(...)` overrides the KDC host and port.
-- `wmi.WithKerberosCache(...)` sets a custom ticket cache.
 
 ## Debug logging
 

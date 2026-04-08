@@ -75,8 +75,20 @@ func WithResultOptions(options ResultOptions) QueryOption {
 
 // ResultOptions controls which properties are included in query results.
 type ResultOptions struct {
+	// IgnoreDefaults skips loading class-level default values.
+	// Properties whose values are missing in the instance data
+	// will have their Value set to nil instead of the class default.
+	// Automatically treated as true when IgnoreMissing is enabled.
 	IgnoreDefaults bool
-	IgnoreMissing  bool
+
+	// IgnoreMissing removes properties from the result map entirely
+	// when their values are not present in the instance data.
+	// This implies IgnoreDefaults.
+	IgnoreMissing bool
+
+	// LoadQualifiers controls whether property qualifiers (e.g. key,
+	// read, write) are populated on each Property. When false (the
+	// default), the Qualifiers slice is left empty.
 	LoadQualifiers bool
 }
 
